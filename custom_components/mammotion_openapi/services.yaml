@@ -1,0 +1,40 @@
+cmd_start:
+  target:
+    entity:
+      domain: lawn_mower
+
+start_task:
+  target:
+    entity:
+      domain: lawn_mower
+  fields:
+    task_name:
+      required: true
+      example: "Front lawn"
+      selector:
+        text: {}
+
+pause:
+  target:
+    entity:
+      domain: lawn_mower
+
+resume:
+  target:
+    entity:
+      domain: lawn_mower
+
+stop:
+  target:
+    entity:
+      domain: lawn_mower
+
+return_to_dock:
+  target:
+    entity:
+      domain: lawn_mower
+
+cancel_return:
+  target:
+    entity:
+      domain: lawn_mower

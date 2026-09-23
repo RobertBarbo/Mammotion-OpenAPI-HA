@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install test dependencies
+        run: python -m pip install aiohttp voluptuous
+      - name: Run mocked tests
+        run: python -m unittest discover -s tests -q
+      - name: Compile integration
+        run: python -m compileall -q custom_components/mammotion_openapi
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate HACS repository
+        uses: hacs/action@main
+        with:
+          category: integration

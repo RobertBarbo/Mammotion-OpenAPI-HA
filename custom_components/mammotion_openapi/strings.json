@@ -1,0 +1,98 @@
+{
+  "title": "Mammotion OpenAPI",
+  "services": {
+    "cmd_start": {
+      "name": "Start default mowing",
+      "description": "Send the Mammotion CMD_START command to the mower."
+    },
+    "start_task": {
+      "name": "Start saved task",
+      "description": "Start a saved Mammotion task by its exact name.",
+      "fields": {
+        "task_name": {
+          "name": "Task name",
+          "description": "Exact name of a task saved in the Mammotion app."
+        }
+      }
+    },
+    "pause": {
+      "name": "Pause mowing",
+      "description": "Pause the current mowing task."
+    },
+    "resume": {
+      "name": "Resume mowing",
+      "description": "Resume a paused mowing task."
+    },
+    "stop": {
+      "name": "Stop mowing",
+      "description": "Stop the current task without returning to the dock."
+    },
+    "return_to_dock": {
+      "name": "Return to dock",
+      "description": "Send the mower back to its dock."
+    },
+    "cancel_return": {
+      "name": "Cancel return",
+      "description": "Cancel a return-to-dock operation."
+    }
+  },
+  "entity": {
+    "button": {
+      "cmd_start": {"name": "Start default mowing"},
+      "start": {"name": "Start named task"},
+      "pause": {"name": "Pause"},
+      "resume": {"name": "Resume"},
+      "stop": {"name": "Stop"},
+      "return": {"name": "Return to dock"},
+      "cancel_return": {"name": "Cancel return"}
+    },
+    "text": {
+      "task_name": {"name": "Saved task name for Start"}
+    },
+    "sensor": {
+      "battery_level": {"name": "Battery"},
+      "status": {"name": "Status"},
+      "charge_status": {"name": "Charge status code"},
+      "used_network": {"name": "Active network code"},
+      "wifi_rssi": {"name": "Wi-Fi signal"},
+      "cellular_rssi": {"name": "Cellular signal"}
+    },
+    "binary_sensor": {
+      "online": {"name": "Online"},
+      "wifi_available": {"name": "Wi-Fi available"},
+      "cellular_available": {"name": "Cellular available"}
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Mammotion OpenAPI",
+        "description": "Enter your Mammotion developer credentials.",
+        "data": {
+          "client_id": "Client ID",
+          "client_secret": "Client Secret"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect Mammotion OpenAPI",
+        "description": "Enter your current Mammotion developer credentials.",
+        "data": {
+          "client_id": "Client ID",
+          "client_secret": "Client Secret"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The Client ID or Client Secret was rejected.",
+      "cannot_connect": "Could not connect to Mammotion. Try again later.",
+      "invalid_response": "Mammotion returned an unexpected response.",
+      "api_error": "Mammotion returned an API error.",
+      "no_mowers": "No mowers were found for these credentials.",
+      "unknown": "An unexpected error occurred. Try again later."
+    },
+    "abort": {
+      "already_configured": "These credentials are already configured.",
+      "reauth_successful": "Mammotion credentials were updated."
+    }
+  }
+}

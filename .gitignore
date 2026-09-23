@@ -1,0 +1,21 @@
+# Local credentials and secret-bearing test inputs
+*secret*
+*credential*
+*.env
+.env.*
+*.key
+*.pem
+*.p12
+*.token
+.storage/
+mammotion API.txt
+tests/**/local_*
+*.log
+.coverage
+htmlcov/
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
