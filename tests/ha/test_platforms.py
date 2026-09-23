@@ -15,7 +15,12 @@ from homeassistant.exceptions import HomeAssistantError
 from custom_components.mammotion_openapi import binary_sensor, button, lawn_mower, select, sensor, text
 from custom_components.mammotion_openapi.api.exceptions import MammotionApiError, MammotionTransportError
 from custom_components.mammotion_openapi.api.models import Mower, MowerAction, MowerNetwork, MowerPlan
+from custom_components.mammotion_openapi.api.extended_models import (
+    DeviceErrorCodePage, WorkParameters, WorkReport, WorkReportDetail,
+    WorkReportPage, WorkReportSummary,
+)
 from custom_components.mammotion_openapi.coordinator import MammotionDataUpdateCoordinator
+from custom_components.mammotion_openapi.read_only_coordinator import MammotionReadOnlyCoordinator
 from tests.ha.support import FakeEntry, FakeHass
 
 
@@ -47,6 +52,7 @@ class _Client:
             "mower-b": (),
         }
         self.plan_calls: list[str] = []
+        self.read_calls: list[tuple[str, str]] = []
 
     async def get_mowers(self) -> tuple[Mower, ...]:
         for mower_id, detail in self.details.items():
@@ -74,6 +80,26 @@ class _Client:
             raise plans
         return plans
 
+    async def get_work_parameters(self, mower_id: str) -> WorkParameters:
+        self.read_calls.append(("work_parameters", mower_id))
+        return WorkParameters(knife_height=35, speed=60)
+
+    async def get_work_report_summary(self, mower_id: str) -> WorkReportSummary:
+        self.read_calls.append(("report_summary", mower_id))
+        return WorkReportSummary(work_count=3, total_work_area=450.25)
+
+    async def search_work_reports(self, mower_id: str) -> WorkReportPage:
+        self.read_calls.append(("search_work_reports", mower_id))
+        return WorkReportPage(records=(WorkReport(work_id="work-a"),), total=1)
+
+    async def get_work_report(self, mower_id: str, work_id: str) -> WorkReportDetail:
+        self.read_calls.append(("get_work_report", mower_id))
+        return WorkReportDetail(energy_consume=120.5)
+
+    async def search_error_codes(self, mower_id: str) -> DeviceErrorCodePage:
+        self.read_calls.append(("search_error_codes", mower_id))
+        return DeviceErrorCodePage(records=(), total=0)
+
     async def send_action(
         self, mower_id: str, action: MowerAction, params: dict | None = None
     ) -> None:
@@ -92,8 +118,13 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
             self.hass, self.entry, self.client  # type: ignore[arg-type]
         )
         await self.coordinator.async_config_entry_first_refresh()
+        self.read_only_coordinator = MammotionReadOnlyCoordinator(
+            self.hass, self.entry, self.client, self.coordinator  # type: ignore[arg-type]
+        )
+        await self.read_only_coordinator.async_config_entry_first_refresh()
         self.entry.runtime_data = SimpleNamespace(
-            coordinator=self.coordinator, client=self.client,
+            coordinator=self.coordinator, read_only_coordinator=self.read_only_coordinator,
+            client=self.client,
             task_names={}, selected_task_names={},
         )
         self.mowers: list[lawn_mower.MammotionLawnMower] = []
@@ -101,6 +132,7 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
         self.task_inputs: list[text.MammotionTaskNameText] = []
         self.sensors: list[sensor.MammotionSensor] = []
         self.last_update_sensors: list[sensor.MammotionLastDetailUpdateSensor] = []
+        self.read_only_sensors: list[sensor.MammotionReadOnlySensor] = []
         self.task_selects: list[select.MammotionTaskSelect] = []
         self.binary_sensors: list[binary_sensor.MammotionBinarySensor] = []
         await lawn_mower.async_setup_entry(self.hass, self.entry, self.mowers.extend)  # type: ignore[arg-type]
@@ -109,6 +141,10 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
             self.last_update_sensors.extend(
                 item for item in entities
                 if isinstance(item, sensor.MammotionLastDetailUpdateSensor)
+            )
+            self.read_only_sensors.extend(
+                item for item in entities
+                if isinstance(item, sensor.MammotionReadOnlySensor)
             )
         await sensor.async_setup_entry(self.hass, self.entry, add_sensors)  # type: ignore[arg-type]
         await binary_sensor.async_setup_entry(
@@ -135,6 +171,8 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
         ))
         self.assertFalse(any(entity.device_id == "rtk-a" for entity in self.task_inputs))
         self.assertFalse(any(entity.device_id == "rtk-a" for entity in self.task_selects))
+        self.assertFalse(any(entity.device_id == "rtk-a" for entity in self.read_only_sensors))
+        self.assertFalse(any(device_id == "rtk-a" for _, device_id in self.client.read_calls))
         self.assertEqual(len(self.last_update_sensors), 3)
 
     async def test_observed_values_and_stable_identifiers(self) -> None:
@@ -437,9 +475,71 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_button_does_not_send_action(self) -> None:
         refresh = next(item for item in self.buttons if isinstance(item, button.MammotionRefreshButton))
         before = len(self.client.plan_calls)
+        read_before = len(self.client.read_calls)
         await refresh.async_press()
         self.assertEqual(self.client.actions, [])
         self.assertGreater(len(self.client.plan_calls), before)
+        self.assertGreater(len(self.client.read_calls), read_before)
+
+    async def test_documented_read_only_values_have_separate_sensors(self) -> None:
+        values = {
+            item.entity_description.key: item.native_value
+            for item in self.read_only_sensors if item.device_id == "mower-a"
+        }
+        self.assertEqual(values["work_count"], 3)
+        self.assertEqual(values["total_work_area"], 450.25)
+        self.assertEqual(values["knife_height_code"], 35)
+        self.assertEqual(values["work_speed_code"], 60)
+        self.assertEqual(values["recorded_error_count"], 0)
+        self.assertEqual(values["first_returned_report_energy"], 120.5)
+        self.assertIsNotNone(values["last_read_only_update"])
+        self.assertEqual(self.client.actions, [])
+
+    async def test_optional_endpoint_failure_does_not_disable_mower(self) -> None:
+        async def failing_summary(_mower_id: str) -> WorkReportSummary:
+            raise MammotionTransportError("temporary outage")
+
+        self.client.get_work_report_summary = failing_summary  # type: ignore[method-assign]
+        await self.read_only_coordinator.async_request_refresh()
+        summary_sensor = next(
+            item for item in self.read_only_sensors
+            if item.device_id == "mower-a" and item.entity_description.key == "work_count"
+        )
+        mower = next(item for item in self.mowers if item.device_id == "mower-a")
+        self.assertFalse(summary_sensor.available)
+        self.assertTrue(mower.available)
+
+    async def test_unexpected_optional_failure_is_isolated(self) -> None:
+        async def failing_params(_mower_id: str) -> WorkParameters:
+            raise RuntimeError("fake-sensitive-response")
+
+        self.client.get_work_parameters = failing_params  # type: ignore[method-assign]
+        await self.read_only_coordinator.async_request_refresh()
+        param_sensor = next(
+            item for item in self.read_only_sensors
+            if item.device_id == "mower-a" and item.entity_description.key == "knife_height_code"
+        )
+        mower = next(item for item in self.mowers if item.device_id == "mower-a")
+        self.assertFalse(param_sensor.available)
+        self.assertTrue(mower.available)
+
+    async def test_empty_reports_do_not_request_report_detail(self) -> None:
+        async def empty_reports(_mower_id: str) -> WorkReportPage:
+            return WorkReportPage(records=(), total=0)
+
+        self.client.search_work_reports = empty_reports  # type: ignore[method-assign]
+        self.client.read_calls.clear()
+        await self.read_only_coordinator.async_request_refresh()
+        self.assertFalse(any(name == "get_work_report" for name, _ in self.client.read_calls))
+
+    async def test_rtk_manual_refresh_does_not_request_read_only_paths(self) -> None:
+        refresh = next(
+            item for item in self.buttons
+            if isinstance(item, button.MammotionRefreshButton) and item.device_id == "rtk-a"
+        )
+        self.client.read_calls.clear()
+        await refresh.async_press()
+        self.assertEqual(self.client.read_calls, [])
 
     async def test_network_code_fallback(self) -> None:
         self.assertEqual(sensor._network_name("2"), "Cellular")

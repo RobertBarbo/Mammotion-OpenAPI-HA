@@ -20,7 +20,7 @@ class MammotionMalformedResponseError(MammotionError):
 
 
 class MammotionApiError(MammotionError):
-    """The Mammotion API returned a non-zero envelope code."""
+    """The Mammotion API returned a code outside the endpoint's success set."""
 
     def __init__(self, code: int, message: str | None = None) -> None:
         self.code = code

@@ -51,7 +51,9 @@ async def async_setup_entry(
             if device_id in added:
                 continue
             added.add(device_id)
-            entities.append(MammotionRefreshButton(coordinator, device_id))
+            entities.append(
+                MammotionRefreshButton(coordinator, runtime.read_only_coordinator, device_id)
+            )
             if is_known_rtk_station(snapshot.mower):
                 continue
             entities.extend(
@@ -123,8 +125,9 @@ class MammotionRefreshButton(MammotionCoordinatorEntity, ButtonEntity):
 
     _attr_translation_key = "refresh_data"
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    def __init__(self, coordinator, read_only_coordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id, "refresh_data")
+        self.read_only_coordinator = read_only_coordinator
 
     @property
     def available(self) -> bool:
@@ -133,3 +136,5 @@ class MammotionRefreshButton(MammotionCoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.coordinator.async_request_refresh()
+        if self.snapshot and not is_known_rtk_station(self.snapshot.mower):
+            await self.read_only_coordinator.async_request_refresh()

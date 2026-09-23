@@ -7,6 +7,9 @@ from unittest.mock import patch
 
 from custom_components.mammotion_openapi import async_setup, async_setup_entry, async_unload_entry
 from custom_components.mammotion_openapi.api.models import Mower
+from custom_components.mammotion_openapi.api.extended_models import (
+    DeviceErrorCodePage, WorkParameters, WorkReportPage, WorkReportSummary,
+)
 from tests.ha.support import FakeEntry, FakeHass
 
 
@@ -32,6 +35,18 @@ class _Client:
 
     async def get_plans(self, mower_id: str) -> tuple:
         return ()
+
+    async def get_work_parameters(self, mower_id: str) -> WorkParameters:
+        return WorkParameters()
+
+    async def get_work_report_summary(self, mower_id: str) -> WorkReportSummary:
+        return WorkReportSummary()
+
+    async def search_work_reports(self, mower_id: str) -> WorkReportPage:
+        return WorkReportPage(records=())
+
+    async def search_error_codes(self, mower_id: str) -> DeviceErrorCodePage:
+        return DeviceErrorCodePage(records=())
 
 
 class SetupTest(unittest.IsolatedAsyncioTestCase):

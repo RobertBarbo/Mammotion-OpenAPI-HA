@@ -7,11 +7,15 @@ import unittest
 from types import SimpleNamespace
 
 from custom_components.mammotion_openapi.api.models import Mower, MowerNetwork
+from custom_components.mammotion_openapi.api.extended_models import (
+    DeviceErrorCode, DeviceErrorCodePage, WorkReport, WorkReportPage,
+)
 from custom_components.mammotion_openapi.coordinator import MowerSnapshot
 from custom_components.mammotion_openapi.diagnostics import (
     async_get_config_entry_diagnostics,
     async_get_device_diagnostics,
 )
+from custom_components.mammotion_openapi.read_only_coordinator import ReadOnlySnapshot
 from tests.ha.support import FakeEntry, FakeHass
 
 
@@ -50,6 +54,16 @@ class DiagnosticsTest(unittest.IsolatedAsyncioTestCase):
                     ),
                 },
             ),
+            read_only_coordinator=SimpleNamespace(data={
+                "fake-private-device-id": ReadOnlySnapshot(
+                    report_page=WorkReportPage(records=(
+                        WorkReport(work_id="fake-private-work-id"),
+                    )),
+                    error_codes=DeviceErrorCodePage(records=(
+                        DeviceErrorCode(implication="Private fault description"),
+                    )),
+                ),
+            }),
             task_names={"fake-private-device-id": "Private Task Name"},
         )
 
@@ -71,6 +85,7 @@ class DiagnosticsTest(unittest.IsolatedAsyncioTestCase):
             "fake-access-token", "fake-authorization", "fake-private-device-id",
             "fake-rtk-id", "Private Garden Name", "Private Nickname",
             "Private Task Name", "private-image.png",
+            "fake-private-work-id", "Private fault description",
         ):
             self.assertNotIn(secret, rendered)
 

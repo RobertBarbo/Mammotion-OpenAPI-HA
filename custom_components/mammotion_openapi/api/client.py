@@ -1,4 +1,4 @@
-"""Async client for the confirmed Mammotion Open API endpoints."""
+"""Async client for the published Mammotion Open API endpoints."""
 
 from __future__ import annotations
 
@@ -10,6 +10,18 @@ from urllib.parse import quote
 import aiohttp
 
 from .auth import MammotionAuth
+from .extended_models import (
+    DeviceErrorCodePage,
+    WorkParameters,
+    WorkReportDetail,
+    WorkReportPage,
+    WorkReportSummary,
+    parse_error_code_page,
+    parse_work_parameters,
+    parse_work_report_detail,
+    parse_work_report_page,
+    parse_work_report_summary,
+)
 from .exceptions import (
     MammotionApiError,
     MammotionAuthenticationError,
@@ -19,6 +31,10 @@ from .exceptions import (
 from .models import Mower, MowerAction, MowerPlan, parse_mower, parse_plans
 
 API_BASE_URL = "https://api-open.mammotion.com"
+
+# Existing endpoints have been observed returning code 0. The additional
+# documented endpoints show code 200 in their OpenAPI response examples.
+_DOCUMENTED_READ_SUCCESS_CODES = (0, 200)
 
 
 class MammotionApiClient:
@@ -61,6 +77,100 @@ class MammotionApiClient:
         data = await self._async_request("GET", f"/v1/mower/{_device_path(device_id)}/plan")
         return parse_plans(data)
 
+    async def get_work_parameters(self, device_id: str) -> WorkParameters:
+        """Read current work parameters; does not change mower settings."""
+        data = await self._async_request(
+            "GET", f"/v1/mower/{_device_path(device_id)}/work-params",
+            success_codes=_DOCUMENTED_READ_SUCCESS_CODES,
+        )
+        return parse_work_parameters(data)
+
+    async def search_work_reports(
+        self,
+        device_id: str,
+        *,
+        page_number: int = 1,
+        page_size: int = 10,
+        end_work_time_start: int | None = None,
+        end_work_time_end: int | None = None,
+        work_type: int | None = None,
+        work_result: int | None = None,
+    ) -> WorkReportPage:
+        """Query a page of historical work reports (POST is read-only)."""
+        payload = _work_report_query(
+            device_id, page_number, page_size,
+            end_work_time_start=end_work_time_start,
+            end_work_time_end=end_work_time_end,
+            work_type=work_type,
+            work_result=work_result,
+        )
+        data = await self._async_request(
+            "POST", "/v1/mower/work-reports/search", json=payload,
+            success_codes=_DOCUMENTED_READ_SUCCESS_CODES,
+        )
+        return parse_work_report_page(data)
+
+    async def get_work_report_summary(
+        self,
+        device_id: str,
+        *,
+        end_work_time_start: int | None = None,
+        end_work_time_end: int | None = None,
+        work_type: int | None = None,
+        work_result: int | None = None,
+    ) -> WorkReportSummary:
+        """Query aggregate historical work statistics (POST is read-only)."""
+        payload = _work_report_query(
+            device_id, 1, 10,
+            end_work_time_start=end_work_time_start,
+            end_work_time_end=end_work_time_end,
+            work_type=work_type,
+            work_result=work_result,
+        )
+        data = await self._async_request(
+            "POST", "/v1/mower/work-reports/summary", json=payload,
+            success_codes=_DOCUMENTED_READ_SUCCESS_CODES,
+        )
+        return parse_work_report_summary(data)
+
+    async def get_work_report(self, device_id: str, work_id: str) -> WorkReportDetail:
+        """Read one historical report by its documented work ID."""
+        data = await self._async_request(
+            "GET",
+            f"/v1/mower/{_device_path(device_id)}/work-reports/{_device_path(work_id)}",
+            success_codes=_DOCUMENTED_READ_SUCCESS_CODES,
+        )
+        return parse_work_report_detail(data)
+
+    async def search_error_codes(
+        self,
+        device_id: str,
+        *,
+        page_number: int = 1,
+        page_size: int = 10,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        error_code: str | None = None,
+    ) -> DeviceErrorCodePage:
+        """Query recorded fault/error codes; does not clear faults."""
+        payload: dict[str, Any] = {
+            "deviceId": _require_identifier(device_id, "device_id"),
+            "pageNumber": _positive_int(page_number, "page_number"),
+            "pageSize": _positive_int(page_size, "page_size"),
+        }
+        for key, value in (
+            ("startDate", start_date), ("endDate", end_date), ("errorCode", error_code)
+        ):
+            if value is not None:
+                if not isinstance(value, str):
+                    raise TypeError(f"{key} must be a string")
+                payload[key] = value
+        data = await self._async_request(
+            "POST", "/v1/mower/error-codes/search", json=payload,
+            success_codes=_DOCUMENTED_READ_SUCCESS_CODES,
+        )
+        return parse_error_code_page(data)
+
     async def send_action(
         self,
         device_id: str,
@@ -87,6 +197,7 @@ class MammotionApiClient:
         json: Mapping[str, Any] | None = None,
         require_data: bool = True,
         retry_auth: bool = True,
+        success_codes: tuple[int, ...] = (0,),
     ) -> object:
         token = await self._auth.async_get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -112,25 +223,66 @@ class MammotionApiClient:
             self._auth.async_invalidate_token()
             if retry_auth:
                 return await self._async_request(
-                    method, path, json=json, require_data=require_data, retry_auth=False
+                    method, path, json=json, require_data=require_data,
+                    retry_auth=False, success_codes=success_codes,
                 )
             raise MammotionAuthenticationError("Mammotion rejected the access token")
-        return _unwrap_api_envelope(payload, require_data=require_data)
+        return _unwrap_api_envelope(
+            payload, require_data=require_data, success_codes=success_codes
+        )
 
 
 def _device_path(device_id: str) -> str:
-    if not isinstance(device_id, str) or not device_id:
-        raise ValueError("device_id must be a non-empty string")
-    return quote(device_id, safe="")
+    return quote(_require_identifier(device_id, "path identifier"), safe="")
 
 
-def _unwrap_api_envelope(payload: object, *, require_data: bool = True) -> object:
+def _require_identifier(value: str, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    return value
+
+
+def _positive_int(value: int, name: str) -> int:
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _work_report_query(
+    device_id: str,
+    page_number: int,
+    page_size: int,
+    **filters: int | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "deviceId": _require_identifier(device_id, "device_id"),
+        "pageNumber": _positive_int(page_number, "page_number"),
+        "pageSize": _positive_int(page_size, "page_size"),
+    }
+    for key, field in (
+        ("end_work_time_start", "endWorkTimeStart"),
+        ("end_work_time_end", "endWorkTimeEnd"),
+        ("work_type", "workType"),
+        ("work_result", "workResult"),
+    ):
+        value = filters.get(key)
+        if value is not None:
+            if type(value) is not int:
+                raise TypeError(f"{key} must be an integer")
+            payload[field] = value
+    return payload
+
+
+def _unwrap_api_envelope(
+    payload: object, *, require_data: bool = True,
+    success_codes: tuple[int, ...] = (0,),
+) -> object:
     if not isinstance(payload, Mapping):
         raise MammotionMalformedResponseError("Mammotion API response must be an object")
     code = payload.get("code")
     if isinstance(code, bool) or not isinstance(code, int):
         raise MammotionMalformedResponseError("Mammotion API response code must be an integer")
-    if code != 0:
+    if code not in success_codes:
         message = payload.get("msg")
         raise MammotionApiError(code, message if isinstance(message, str) else None)
     if require_data and "data" not in payload:

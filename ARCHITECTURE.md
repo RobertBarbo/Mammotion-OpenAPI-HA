@@ -4,14 +4,20 @@
 
 This project will be a Home Assistant custom integration that talks **only**
 to Mammotion's official Open API.  API transport and authentication will be
-isolated from Home Assistant entities.  The initial API surface is limited to
-the tested endpoints:
+isolated from Home Assistant entities. The first implemented surface used
+these previously exercised endpoints:
 
 - `POST https://id.mammotion.com/oauth2/token` for client-credentials tokens
 - `GET https://api-open.mammotion.com/v1/mowers`
 - `GET https://api-open.mammotion.com/v1/mower/{deviceId}`
 - `GET https://api-open.mammotion.com/v1/mower/{deviceId}/plan`
 - `POST https://api-open.mammotion.com/v1/mower/action`
+
+The subsequent read-only layer also implements the five officially published
+work-parameter, work-report and error-code endpoints listed in the README.
+Those newer response shapes are still based on the public specification and
+mocked tests, not live device samples. Material upload and subscriptions are
+excluded.
 
 No undocumented endpoints or response fields should be assumed.  Entity
 features are enabled only when supported by these documented/tested responses.
@@ -27,6 +33,7 @@ Mammotion-OpenAPI-HA/
 │       ├── const.py                    # Domain, defaults, stable constants
 │       ├── config_flow.py              # Client ID/Secret configuration flow
 │       ├── coordinator.py              # Per-entry DataUpdateCoordinator
+│       ├── read_only_coordinator.py    # Hourly optional read-only API data
 │       ├── diagnostics.py              # Redacted diagnostics export
 │       ├── lawn_mower.py               # One mower entity per API mower
 │       ├── button.py                    # Known command buttons per mower
@@ -44,6 +51,7 @@ Mammotion-OpenAPI-HA/
 │           ├── client.py               # Async HTTP client and endpoint methods
 │           ├── auth.py                 # Token acquisition/refresh lifecycle
 │           ├── models.py               # Typed, API-shaped response models
+│           ├── extended_models.py      # Documented report/parameter/error models
 │           └── exceptions.py           # API/auth/transport error types
 ├── tests/
 │   ├── __init__.py
@@ -69,13 +77,21 @@ Setup creates one asynchronous `MammotionApiClient` and one
 `MammotionDataUpdateCoordinator` for that entry.  The client owns `aiohttp`
 communication, token acquisition via the client-credentials grant, authorization
 headers, timeout handling, and conversion of responses into API models.  It
-exposes methods corresponding only to the tested endpoints.
+exposes methods corresponding only to the endpoints listed above and the five
+additional documented read-only paths.
 
 The coordinator polls `GET /v1/mowers`, then retrieves detail for every device
 returned by that list. For mower records, it also retrieves the confirmed plan
 list so a local saved-task selector can show returned task names. Empty lists
 are valid; RTK stations are not queried for plans. Coordinator data is keyed
 by the official device `id`, so one account supports multiple devices.
+
+A second coordinator polls optional work parameters, historical reports and
+recorded error codes at most hourly; the manual Refresh data button can
+request an earlier update. Each optional endpoint fails independently so an
+unsupported model or transient failure cannot disable basic mower controls.
+The RTK station is never queried for mower work history. Report map URLs and
+other media resources are not exposed as HA entity attributes or diagnostics.
 
 The `/v1/mowers` response can also contain an RTK reference station. Keep it
 registered as a Home Assistant device; future mower platforms must not attach

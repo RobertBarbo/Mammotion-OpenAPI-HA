@@ -19,10 +19,14 @@ from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api.models import Mower
+from .const import DOMAIN
 from .entity import MammotionCoordinatorEntity
+from .read_only_coordinator import MammotionReadOnlyCoordinator, ReadOnlySnapshot
 
 PARALLEL_UPDATES = 0
 
@@ -116,6 +120,26 @@ async def async_setup_entry(
     add_new_sensors()
     entry.async_on_unload(coordinator.async_add_listener(add_new_sensors))
 
+    read_only_coordinator = entry.runtime_data.read_only_coordinator
+    read_added: set[tuple[str, str]] = set()
+
+    def add_read_only_sensors() -> None:
+        entities = []
+        for device_id in read_only_coordinator.data:
+            for description in READ_ONLY_SENSORS:
+                key = (device_id, description.key)
+                if key in read_added:
+                    continue
+                read_added.add(key)
+                entities.append(
+                    MammotionReadOnlySensor(read_only_coordinator, device_id, description)
+                )
+        if entities:
+            async_add_entities(entities)
+
+    add_read_only_sensors()
+    entry.async_on_unload(read_only_coordinator.async_add_listener(add_read_only_sensors))
+
 
 class MammotionSensor(MammotionCoordinatorEntity, SensorEntity):
     """One raw field from the latest confirmed device detail."""
@@ -164,3 +188,83 @@ class MammotionLastDetailUpdateSensor(MammotionCoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         # A failed detail request must not erase the last successful time.
         return self.snapshot is not None and self.native_value is not None
+
+
+@dataclass(frozen=True, kw_only=True)
+class MammotionReadOnlySensorDescription(SensorEntityDescription):
+    value_fn: Callable[[ReadOnlySnapshot], int | float | datetime | None]
+
+
+READ_ONLY_SENSORS: tuple[MammotionReadOnlySensorDescription, ...] = (
+    MammotionReadOnlySensorDescription(
+        key="work_count", translation_key="work_count",
+        value_fn=lambda data: data.report_summary.work_count if data.report_summary else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="total_work_area", translation_key="total_work_area",
+        native_unit_of_measurement="m²", state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.report_summary.total_work_area if data.report_summary else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="estimated_time_saved", translation_key="estimated_time_saved",
+        native_unit_of_measurement="min", state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.report_summary.save_time if data.report_summary else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="estimated_carbon_reduction", translation_key="estimated_carbon_reduction",
+        native_unit_of_measurement="g", state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.report_summary.carbon_reduction if data.report_summary else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="knife_height_code", translation_key="knife_height_code",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.work_parameters.knife_height if data.work_parameters else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="work_speed_code", translation_key="work_speed_code",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.work_parameters.speed if data.work_parameters else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="recorded_error_count", translation_key="recorded_error_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.error_codes.total if data.error_codes else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="first_returned_report_energy", translation_key="first_returned_report_energy",
+        native_unit_of_measurement="Wh", entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.report_detail.energy_consume if data.report_detail else None,
+    ),
+    MammotionReadOnlySensorDescription(
+        key="last_read_only_update", translation_key="last_read_only_update",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.last_successful_update,
+    ),
+)
+
+
+class MammotionReadOnlySensor(CoordinatorEntity[MammotionReadOnlyCoordinator], SensorEntity):
+    """Optional documented data, never used to decide mower availability."""
+
+    _attr_has_entity_name = True
+    entity_description: MammotionReadOnlySensorDescription
+
+    def __init__(
+        self, coordinator: MammotionReadOnlyCoordinator, device_id: str,
+        description: MammotionReadOnlySensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.device_id = device_id
+        self.entity_description = description
+        self._attr_unique_id = f"{device_id}_{description.key}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, device_id)})
+
+    @property
+    def native_value(self) -> int | float | datetime | None:
+        data = self.coordinator.data.get(self.device_id)
+        return self.entity_description.value_fn(data) if data else None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.native_value is not None

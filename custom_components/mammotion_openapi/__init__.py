@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .coordinator import MammotionDataUpdateCoordinator
+    from .read_only_coordinator import MammotionReadOnlyCoordinator
 
 
 @dataclass(slots=True)
@@ -21,6 +22,7 @@ class MammotionRuntimeData:
 
     client: MammotionApiClient
     coordinator: MammotionDataUpdateCoordinator
+    read_only_coordinator: MammotionReadOnlyCoordinator
     # Local, non-persistent input for the START taskName parameter per mower.
     task_names: dict[str, str] = field(default_factory=dict)
     # A selected API plan is separate so a stale choice cannot override text.
@@ -40,6 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
     from .coordinator import MammotionDataUpdateCoordinator
+    from .read_only_coordinator import MammotionReadOnlyCoordinator
 
     client = MammotionApiClient(
         async_get_clientsession(hass),
@@ -48,8 +51,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     coordinator = MammotionDataUpdateCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
+    read_only_coordinator = MammotionReadOnlyCoordinator(hass, entry, client, coordinator)
+    await read_only_coordinator.async_config_entry_first_refresh()
 
-    entry.runtime_data = MammotionRuntimeData(client=client, coordinator=coordinator)
+    entry.runtime_data = MammotionRuntimeData(
+        client=client, coordinator=coordinator, read_only_coordinator=read_only_coordinator
+    )
     _register_devices(hass, entry, coordinator)
     entry.async_on_unload(
         coordinator.async_add_listener(lambda: _register_devices(hass, entry, coordinator))
