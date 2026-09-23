@@ -31,6 +31,7 @@ Mammotion-OpenAPI-HA/
 │       ├── lawn_mower.py               # One mower entity per API mower
 │       ├── button.py                    # Known command buttons per mower
 │       ├── text.py                      # Local task-name input for START
+│       ├── select.py                    # Local selection of returned plan names
 │       ├── sensor.py                   # Battery, signal and supported details
 │       ├── binary_sensor.py            # Online/network availability states
 │       ├── brand/
@@ -70,11 +71,11 @@ communication, token acquisition via the client-credentials grant, authorization
 headers, timeout handling, and conversion of responses into API models.  It
 exposes methods corresponding only to the tested endpoints.
 
-The coordinator polls `GET /v1/mowers`, then retrieves detail for every mower
-returned by that list.  Coordinator data is keyed by the official mower `id`,
-so one account naturally supports any number of mowers.  Plan data is fetched
-only when a future supported entity/feature needs it; no plan fields are
-presumed at this stage.
+The coordinator polls `GET /v1/mowers`, then retrieves detail for every device
+returned by that list. For mower records, it also retrieves the confirmed plan
+list so a local saved-task selector can show returned task names. Empty lists
+are valid; RTK stations are not queried for plans. Coordinator data is keyed
+by the official device `id`, so one account supports multiple devices.
 
 The `/v1/mowers` response can also contain an RTK reference station. Keep it
 registered as a Home Assistant device; future mower platforms must not attach
@@ -95,9 +96,12 @@ Platforms subscribe to that coordinator rather than making their own requests:
   state and network availability. A returned RTK station remains a device and
   may receive these entities when the API actually supplies their values.
 - `button`: one per confirmed mower command, visible on each mower device;
-  the observed RTK station has no command buttons.
+  the RTK has no command buttons. Every device has a read-only Refresh data
+  button that triggers coordinator polling, not a mower command.
 - `text`: a local per-mower task-name input for the named `START` button. It
   sends no command when edited and is cleared on integration reload.
+- `select`: a local per-mower choice of plan names returned by the API. It is
+  absent for empty plan lists; the text input remains available as fallback.
 
 The integration must derive entity unique IDs from the immutable API mower
 `id`, never the user-editable name or nickname.  Names and nicknames are

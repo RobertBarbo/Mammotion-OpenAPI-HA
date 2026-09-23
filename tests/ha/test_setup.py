@@ -30,6 +30,9 @@ class _Client:
     async def get_mower(self, mower_id: str) -> Mower:
         return self.details[mower_id]
 
+    async def get_plans(self, mower_id: str) -> tuple:
+        return ()
+
 
 class SetupTest(unittest.IsolatedAsyncioTestCase):
     async def test_registers_all_command_services_before_entries_load(self) -> None:
@@ -65,7 +68,7 @@ class SetupTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(entry.runtime_data.coordinator.config_entry, entry)
         self.assertEqual(len(entry.runtime_data.coordinator._listeners), 1)
         self.assertEqual(hass.config_entries.forwarded, [
-            ("lawn_mower", "sensor", "binary_sensor", "button", "text")
+            ("lawn_mower", "sensor", "binary_sensor", "button", "text", "select")
         ])
 
         entry.runtime_data.client.details["mower-c"] = Mower(id="mower-c")
@@ -76,7 +79,7 @@ class SetupTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await async_unload_entry(hass, entry))  # type: ignore[arg-type]
         self.assertEqual(hass.config_entries.unloaded, [
-            ("lawn_mower", "sensor", "binary_sensor", "button", "text")
+            ("lawn_mower", "sensor", "binary_sensor", "button", "text", "select")
         ])
         entry.process_unload_callbacks()
         self.assertEqual(entry.runtime_data.coordinator._listeners, [])

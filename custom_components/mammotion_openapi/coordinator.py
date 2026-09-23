@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -13,8 +14,15 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api.client import MammotionApiClient
 from .api.exceptions import MammotionAuthenticationError, MammotionError
-from .api.models import Mower
-from .const import DOMAIN, MAX_CONCURRENT_DETAILS, UPDATE_INTERVAL
+from .api.models import Mower, MowerPlan
+from .const import (
+    CONF_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL_MINUTES,
+    DOMAIN,
+    MAX_CONCURRENT_DETAILS,
+    RTK_STATION_MODEL,
+    UPDATE_INTERVAL_CHOICES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +38,8 @@ class MowerSnapshot:
 
     mower: Mower
     detail_available: bool
+    plans: tuple[MowerPlan, ...] = ()
+    last_detail_update: datetime | None = None
 
 
 class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapshot]]):
@@ -38,12 +48,15 @@ class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapsh
     def __init__(
         self, hass: HomeAssistant, entry: ConfigEntry, client: MammotionApiClient
     ) -> None:
+        interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
+        if interval not in UPDATE_INTERVAL_CHOICES:
+            interval = DEFAULT_UPDATE_INTERVAL_MINUTES
         super().__init__(
             hass,
             _LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=UPDATE_INTERVAL,
+            update_interval=timedelta(minutes=interval),
             always_update=False,
         )
         self.client = client
@@ -56,24 +69,34 @@ class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapsh
         except MammotionError:
             raise UpdateFailed("Unable to retrieve Mammotion devices") from None
 
-        # The /v1/mowers endpoint is the only confirmed discovery source. It
-        # does not expose a documented device-type field, so model/name based
-        # filtering would risk excluding valid mowers. No mower entities are
-        # created in this phase; future platforms must gate mower features.
+        # The mower list is the only confirmed discovery source. The observed
+        # RTK model remains a device but has no mower plans or controls.
         mowers_by_id = {mower.id: mower for mower in listed}
         limit = asyncio.Semaphore(MAX_CONCURRENT_DETAILS)
 
-        async def fetch_detail(mower_id: str) -> Mower:
+        async def fetch_device(
+            mower_id: str, listed_mower: Mower
+        ) -> tuple[Mower, tuple[MowerPlan, ...] | None]:
             async with limit:
-                return await self.client.get_mower(mower_id)
+                detail = await self.client.get_mower(mower_id)
+                if (detail.model or listed_mower.model) == RTK_STATION_MODEL:
+                    return detail, ()
+                try:
+                    plans = await self.client.get_plans(mower_id)
+                except MammotionAuthenticationError:
+                    raise
+                except MammotionError:
+                    plans = None
+                return detail, plans
 
         results = await asyncio.gather(
-            *(fetch_detail(mower_id) for mower_id in mowers_by_id),
+            *(fetch_device(mower_id, mower) for mower_id, mower in mowers_by_id.items()),
             return_exceptions=True,
         )
 
         previous = self.data or {}
         current: dict[str, MowerSnapshot] = {}
+        refreshed_at = datetime.now(timezone.utc)
         for (mower_id, listed_mower), result in zip(mowers_by_id.items(), results):
             if isinstance(result, MammotionAuthenticationError):
                 raise ConfigEntryAuthFailed("Mammotion authentication failed") from None
@@ -84,14 +107,21 @@ class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapsh
                 current[mower_id] = MowerSnapshot(
                     mower=_merge_list_fields(listed_mower, cached.mower) if cached else listed_mower,
                     detail_available=False,
+                    plans=cached.plans if cached else (),
+                    last_detail_update=cached.last_detail_update if cached else None,
                 )
                 continue
             if isinstance(result, BaseException):
                 raise UpdateFailed("Unexpected Mammotion detail error") from None
-            if result.id != mower_id:
+            detail, plans = result
+            if detail.id != mower_id:
                 raise UpdateFailed("Mammotion detail returned a mismatched device ID")
+            cached = previous.get(mower_id)
             current[mower_id] = MowerSnapshot(
-                mower=_merge_list_fields(listed_mower, result), detail_available=True
+                mower=_merge_list_fields(listed_mower, detail),
+                detail_available=True,
+                plans=plans if plans is not None else (cached.plans if cached else ()),
+                last_detail_update=refreshed_at,
             )
 
         return current

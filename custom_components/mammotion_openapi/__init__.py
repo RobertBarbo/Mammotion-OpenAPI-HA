@@ -23,6 +23,8 @@ class MammotionRuntimeData:
     coordinator: MammotionDataUpdateCoordinator
     # Local, non-persistent input for the START taskName parameter per mower.
     task_names: dict[str, str] = field(default_factory=dict)
+    # A selected API plan is separate so a stale choice cannot override text.
+    selected_task_names: dict[str, str] = field(default_factory=dict)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:

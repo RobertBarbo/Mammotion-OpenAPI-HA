@@ -1,12 +1,13 @@
 """Constants for the Mammotion OpenAPI integration."""
 
-from datetime import timedelta
-
 DOMAIN = "mammotion_openapi"
 CONF_CLIENT_ID = "client_id"
 CONF_CLIENT_SECRET = "client_secret"
-PLATFORMS = ("lawn_mower", "sensor", "binary_sensor", "button", "text")
+PLATFORMS = ("lawn_mower", "sensor", "binary_sensor", "button", "text", "select")
 
-# One list request plus one detail request per mower on each refresh.
-UPDATE_INTERVAL = timedelta(minutes=5)
+# Keep scheduled polling conservative until official rate limits are known.
+CONF_UPDATE_INTERVAL = "update_interval"
+DEFAULT_UPDATE_INTERVAL_MINUTES = 5
+UPDATE_INTERVAL_CHOICES = (5, 10, 15)
 MAX_CONCURRENT_DETAILS = 5
+RTK_STATION_MODEL = "RtkRefStationV1"

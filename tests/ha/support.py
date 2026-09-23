@@ -24,6 +24,7 @@ def install_home_assistant_stubs() -> None:
     binary_sensor = types.ModuleType("homeassistant.components.binary_sensor")
     button = types.ModuleType("homeassistant.components.button")
     text = types.ModuleType("homeassistant.components.text")
+    select = types.ModuleType("homeassistant.components.select")
     helpers = types.ModuleType("homeassistant.helpers")
     helpers.__path__ = []  # type: ignore[attr-defined]
     update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
@@ -57,6 +58,13 @@ def install_home_assistant_stubs() -> None:
         def async_update_reload_and_abort(self, entry: Any, **kwargs: Any) -> dict[str, Any]:
             entry.data.update(kwargs["data_updates"])
             return {"type": "abort", "reason": "reauth_successful"}
+
+    class OptionsFlowWithReload:
+        def async_show_form(self, **kwargs: Any) -> dict[str, Any]:
+            return {"type": "form", **kwargs}
+
+        def async_create_entry(self, **kwargs: Any) -> dict[str, Any]:
+            return {"type": "create_entry", **kwargs}
 
     class DataUpdateCoordinator:
         def __class_getitem__(cls, _item: Any) -> type:
@@ -126,6 +134,7 @@ def install_home_assistant_stubs() -> None:
     class SensorDeviceClass:
         BATTERY = "battery"
         SIGNAL_STRENGTH = "signal_strength"
+        TIMESTAMP = "timestamp"
 
     class SensorStateClass:
         MEASUREMENT = "measurement"
@@ -159,9 +168,11 @@ def install_home_assistant_stubs() -> None:
             return value
 
     config_entries.ConfigFlow = ConfigFlow  # type: ignore[attr-defined]
+    config_entries.OptionsFlowWithReload = OptionsFlowWithReload  # type: ignore[attr-defined]
     config_entries.ConfigFlowResult = dict  # type: ignore[attr-defined]
     config_entries.ConfigEntry = object  # type: ignore[attr-defined]
     core.HomeAssistant = object  # type: ignore[attr-defined]
+    core.callback = lambda func: func  # type: ignore[attr-defined]
     exceptions.ConfigEntryAuthFailed = ConfigEntryAuthFailed  # type: ignore[attr-defined]
     exceptions.HomeAssistantError = HomeAssistantError  # type: ignore[attr-defined]
     update_coordinator.DataUpdateCoordinator = DataUpdateCoordinator  # type: ignore[attr-defined]
@@ -220,6 +231,7 @@ def install_home_assistant_stubs() -> None:
     button.ButtonEntityDescription = EntityDescription  # type: ignore[attr-defined]
     button.ButtonEntity = Entity  # type: ignore[attr-defined]
     text.TextEntity = Entity  # type: ignore[attr-defined]
+    select.SelectEntity = Entity  # type: ignore[attr-defined]
 
     homeassistant.config_entries = config_entries  # type: ignore[attr-defined]
     homeassistant.core = core  # type: ignore[attr-defined]
@@ -232,6 +244,7 @@ def install_home_assistant_stubs() -> None:
     components.binary_sensor = binary_sensor  # type: ignore[attr-defined]
     components.button = button  # type: ignore[attr-defined]
     components.text = text  # type: ignore[attr-defined]
+    components.select = select  # type: ignore[attr-defined]
     helpers.aiohttp_client = aiohttp_client  # type: ignore[attr-defined]
     helpers.device_registry = device_registry  # type: ignore[attr-defined]
     helpers.update_coordinator = update_coordinator  # type: ignore[attr-defined]
@@ -253,6 +266,7 @@ def install_home_assistant_stubs() -> None:
         binary_sensor,
         button,
         text,
+        select,
         helpers,
         update_coordinator,
         aiohttp_client,
@@ -272,6 +286,7 @@ class FakeEntry:
     def __init__(self, client_id: str = "test-client-id") -> None:
         self.entry_id = "test-entry-id"
         self.data = {"client_id": client_id, "client_secret": "test-client-secret"}
+        self.options: dict[str, Any] = {}
         self.runtime_data: Any = None
         self._unload_callbacks: list[Any] = []
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -57,7 +58,7 @@ SENSORS: tuple[MammotionSensorDescription, ...] = (
         key="used_network",
         translation_key="used_network",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda mower: mower.network.used_network if mower.network else None,
+        value_fn=lambda mower: _network_name(mower.network.used_network) if mower.network else None,
     ),
     MammotionSensorDescription(
         key="wifi_rssi",
@@ -82,6 +83,11 @@ SENSORS: tuple[MammotionSensorDescription, ...] = (
 )
 
 
+def _network_name(code: str | None) -> str | None:
+    """Translate only codes documented by Mammotion; leave others visible."""
+    return {"1": "Wi-Fi", "2": "Cellular"}.get(code, code)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -94,6 +100,10 @@ async def async_setup_entry(
     def add_new_sensors() -> None:
         entities = []
         for device_id, snapshot in coordinator.data.items():
+            update_key = (device_id, "last_detail_update")
+            if update_key not in added:
+                added.add(update_key)
+                entities.append(MammotionLastDetailUpdateSensor(coordinator, device_id))
             for description in SENSORS:
                 key = (device_id, description.key)
                 if key in added or description.value_fn(snapshot.mower) is None:
@@ -133,3 +143,24 @@ class MammotionSensor(MammotionCoordinatorEntity, SensorEntity):
             and snapshot.mower.online is not False
             and self.native_value is not None
         )
+
+
+class MammotionLastDetailUpdateSensor(MammotionCoordinatorEntity, SensorEntity):
+    """Timestamp of the latest successful detail fetch for this device."""
+
+    _attr_translation_key = "last_detail_update"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "last_detail_update")
+
+    @property
+    def native_value(self) -> datetime | None:
+        snapshot = self.snapshot
+        return snapshot.last_detail_update if snapshot else None
+
+    @property
+    def available(self) -> bool:
+        # A failed detail request must not erase the last successful time.
+        return self.snapshot is not None and self.native_value is not None

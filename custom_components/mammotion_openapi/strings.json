@@ -44,7 +44,11 @@
       "resume": {"name": "Resume"},
       "stop": {"name": "Stop"},
       "return": {"name": "Return to dock"},
-      "cancel_return": {"name": "Cancel return"}
+      "cancel_return": {"name": "Cancel return"},
+      "refresh_data": {"name": "Refresh data"}
+    },
+    "select": {
+      "saved_task": {"name": "Saved task"}
     },
     "text": {
       "task_name": {"name": "Saved task name for Start"}
@@ -53,7 +57,8 @@
       "battery_level": {"name": "Battery"},
       "status": {"name": "Status"},
       "charge_status": {"name": "Charge status code"},
-      "used_network": {"name": "Active network code"},
+      "used_network": {"name": "Active network"},
+      "last_detail_update": {"name": "Last successful update"},
       "wifi_rssi": {"name": "Wi-Fi signal"},
       "cellular_rssi": {"name": "Cellular signal"}
     },
@@ -61,6 +66,15 @@
       "online": {"name": "Online"},
       "wifi_available": {"name": "Wi-Fi available"},
       "cellular_available": {"name": "Cellular available"}
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Polling interval",
+        "description": "Choose how often to request device data from Mammotion. Manual refresh remains available on each device.",
+        "data": {"update_interval": "Update interval (minutes)"}
+      }
     }
   },
   "config": {

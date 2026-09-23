@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api.exceptions import MammotionError
 from .api.models import Mower, MowerAction
-from .const import DOMAIN
+from .const import DOMAIN, RTK_STATION_MODEL
 from .coordinator import MammotionDataUpdateCoordinator, MowerSnapshot
 
 
@@ -21,7 +21,7 @@ def is_known_rtk_station(mower: Mower) -> bool:
     No general Mammotion device-type field is documented. Keep this narrow:
     the RTK remains a device and may have sensors, but has no mower controls.
     """
-    return mower.model == "RtkRefStationV1"
+    return mower.model == RTK_STATION_MODEL
 
 
 class MammotionCoordinatorEntity(CoordinatorEntity[MammotionDataUpdateCoordinator]):

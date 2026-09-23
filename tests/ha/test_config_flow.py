@@ -106,3 +106,21 @@ class ConfigFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("new-test-secret", str(initial))
         self.assertEqual(result, {"type": "abort", "reason": "reauth_successful"})
         self.assertEqual(entry.data["client_secret"], "new-test-secret")
+
+    async def test_options_flow_uses_conservative_poll_intervals(self) -> None:
+        entry = FakeEntry()
+        flow = MammotionOpenAPIConfigFlow.async_get_options_flow(entry)
+        flow.config_entry = entry
+
+        initial = await flow.async_step_init()
+        self.assertEqual(initial["type"], "form")
+        self.assertEqual(initial["data_schema"]({"update_interval": 10}), {
+            "update_interval": 10,
+        })
+        with self.assertRaises(Exception):
+            initial["data_schema"]({"update_interval": 1})
+
+        result = await flow.async_step_init({"update_interval": 10})
+        self.assertEqual(result, {
+            "type": "create_entry", "data": {"update_interval": 10}
+        })

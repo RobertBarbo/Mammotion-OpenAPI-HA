@@ -8,6 +8,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
@@ -18,7 +19,14 @@ from .api.exceptions import (
     MammotionMalformedResponseError,
     MammotionTransportError,
 )
-from .const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, DOMAIN
+from .const import (
+    CONF_CLIENT_ID,
+    CONF_CLIENT_SECRET,
+    CONF_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL_MINUTES,
+    DOMAIN,
+    UPDATE_INTERVAL_CHOICES,
+)
 
 _CREDENTIAL_SCHEMA = vol.Schema(
     {
@@ -34,6 +42,12 @@ class MammotionOpenAPIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Set up one entry per Mammotion developer credential set."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> MammotionOptionsFlow:
+        """Show account polling options without exposing credentials."""
+        return MammotionOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for credentials and verify that they can discover mowers."""
@@ -102,3 +116,21 @@ class MammotionOpenAPIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
 
         return self.async_show_form(step_id=step_id, data_schema=_CREDENTIAL_SCHEMA, errors=errors)
+
+
+class MammotionOptionsFlow(config_entries.OptionsFlowWithReload):
+    """Reload the entry after changing its conservative poll interval."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data={CONF_UPDATE_INTERVAL: user_input[CONF_UPDATE_INTERVAL]})
+
+        configured = self.config_entry.options.get(
+            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES
+        )
+        schema = vol.Schema({
+            vol.Required(CONF_UPDATE_INTERVAL, default=configured): vol.In(UPDATE_INTERVAL_CHOICES)
+        })
+        return self.async_show_form(step_id="init", data_schema=schema)

@@ -48,12 +48,16 @@ async def async_setup_entry(
     def add_new_buttons() -> None:
         entities = []
         for device_id, snapshot in coordinator.data.items():
-            if device_id in added or is_known_rtk_station(snapshot.mower):
+            if device_id in added:
                 continue
             added.add(device_id)
+            entities.append(MammotionRefreshButton(coordinator, device_id))
+            if is_known_rtk_station(snapshot.mower):
+                continue
             entities.extend(
                 MammotionActionButton(
-                    coordinator, device_id, description, runtime.task_names
+                    coordinator, device_id, description,
+                    runtime.task_names, runtime.selected_task_names,
                 )
                 for description in BUTTONS
             )
@@ -72,10 +76,12 @@ class MammotionActionButton(MammotionCoordinatorEntity, ButtonEntity):
     def __init__(
         self, coordinator, device_id: str,
         description: MammotionButtonDescription, task_names: dict[str, str],
+        selected_task_names: dict[str, str],
     ) -> None:
         super().__init__(coordinator, device_id, description.key)
         self.entity_description = description
         self._task_names = task_names
+        self._selected_task_names = selected_task_names
 
     @property
     def available(self) -> bool:
@@ -95,10 +101,35 @@ class MammotionActionButton(MammotionCoordinatorEntity, ButtonEntity):
             raise HomeAssistantError("Mower is unavailable for commands")
         params = None
         if self.entity_description.action is MowerAction.START:
-            task_name = self._task_names.get(self.device_id)
+            snapshot = self.snapshot
+            available_names = {
+                plan.task_name for plan in snapshot.plans if plan.task_name
+            } if snapshot else set()
+            selected = self._selected_task_names.get(self.device_id)
+            task_name = (
+                selected if selected in available_names
+                else self._task_names.get(self.device_id)
+            )
             if not task_name or not task_name.strip():
-                raise HomeAssistantError("Enter a saved task name before starting it")
+                raise HomeAssistantError("Select or enter a saved task name before starting it")
             params = {"taskName": task_name}
         await async_send_mower_action(
             self.coordinator, self.device_id, self.entity_description.action, params
         )
+
+
+class MammotionRefreshButton(MammotionCoordinatorEntity, ButtonEntity):
+    """Manually request a new official API poll; never send a mower action."""
+
+    _attr_translation_key = "refresh_data"
+
+    def __init__(self, coordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "refresh_data")
+
+    @property
+    def available(self) -> bool:
+        """Keep refresh possible even when the last detail request failed."""
+        return self.snapshot is not None
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_request_refresh()

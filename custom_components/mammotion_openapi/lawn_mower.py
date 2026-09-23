@@ -141,10 +141,9 @@ class MammotionLawnMower(MammotionCoordinatorEntity, LawnMowerEntity):
             # establish that a mower is docked.
             if snapshot.mower.charge_status == 2:
                 return LawnMowerActivity.DOCKED
-            # IDLE was added in HA 2026.10. Older releases have no truthful
-            # activity for an undocked standby mower; the raw status sensor
-            # remains available there.
-            return getattr(LawnMowerActivity, "IDLE", None)
+            # Standby without observed dock evidence is not necessarily idle.
+            # The raw status sensor remains available without guessing.
+            return None
         return _STATUS_TO_ACTIVITY.get(snapshot.mower.status)
 
     async def async_start_mowing(self) -> None:
