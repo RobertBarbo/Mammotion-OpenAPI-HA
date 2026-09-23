@@ -34,8 +34,8 @@ Mammotion-OpenAPI-HA/
 │       ├── sensor.py                   # Battery, signal and supported details
 │       ├── binary_sensor.py            # Online/network availability states
 │       ├── brand/
-│       │   ├── icon.svg                 # Editable generic mower artwork
-│       │   └── icon.png                 # Local HA/HACS icon
+│       │   ├── icon.png                 # Square local HA/HACS icon
+│       │   └── logo.png                 # Local HA integration logo
 │       ├── translations/
 │       │   └── en.json                 # Initial UI strings; extensible later
 │       └── api/

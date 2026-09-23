@@ -1,7 +1,7 @@
 {
   "domain": "mammotion_openapi",
   "name": "Mammotion OpenAPI",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "config_flow": true,
   "documentation": "https://github.com/RobertBarbo/Mammotion-OpenAPI-HA#readme",
   "issue_tracker": "https://github.com/RobertBarbo/Mammotion-OpenAPI-HA/issues",
