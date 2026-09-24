@@ -32,8 +32,7 @@ from .models import Mower, MowerAction, MowerPlan, parse_mower, parse_plans
 
 API_BASE_URL = "https://api-open.mammotion.com"
 
-# Existing endpoints have been observed returning code 0. The additional
-# documented endpoints show code 200 in their OpenAPI response examples.
+# Live devices have returned code 0; the published OpenAPI examples use 200.
 _DOCUMENTED_READ_SUCCESS_CODES = (0, 200)
 
 
@@ -78,7 +77,10 @@ class MammotionApiClient:
         return parse_plans(data)
 
     async def get_work_parameters(self, device_id: str) -> WorkParameters:
-        """Read current work parameters; does not change mower settings."""
+        """Research only: this GET has triggered mowing on a real device.
+
+        Never call it from automatic Home Assistant polling or refreshes.
+        """
         data = await self._async_request(
             "GET", f"/v1/mower/{_device_path(device_id)}/work-params",
             success_codes=_DOCUMENTED_READ_SUCCESS_CODES,
@@ -197,7 +199,7 @@ class MammotionApiClient:
         json: Mapping[str, Any] | None = None,
         require_data: bool = True,
         retry_auth: bool = True,
-        success_codes: tuple[int, ...] = (0,),
+        success_codes: tuple[int, ...] = _DOCUMENTED_READ_SUCCESS_CODES,
     ) -> object:
         token = await self._auth.async_get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -219,17 +221,23 @@ class MammotionApiClient:
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise MammotionTransportError("Unable to reach Mammotion Open API") from err
 
-        if authorization_failed:
-            self._auth.async_invalidate_token()
-            if retry_auth:
-                return await self._async_request(
-                    method, path, json=json, require_data=require_data,
-                    retry_auth=False, success_codes=success_codes,
+        if not authorization_failed:
+            try:
+                return _unwrap_api_envelope(
+                    payload, require_data=require_data, success_codes=success_codes
                 )
-            raise MammotionAuthenticationError("Mammotion rejected the access token")
-        return _unwrap_api_envelope(
-            payload, require_data=require_data, success_codes=success_codes
-        )
+            except MammotionAuthenticationError:
+                authorization_failed = True
+
+        # HTTP and envelope-level authentication failures share the same
+        # one-retry limit. Never include the remote message or token here.
+        self._auth.async_invalidate_token()
+        if retry_auth:
+            return await self._async_request(
+                method, path, json=json, require_data=require_data,
+                retry_auth=False, success_codes=success_codes,
+            )
+        raise MammotionAuthenticationError("Mammotion rejected the access token")
 
 
 def _device_path(device_id: str) -> str:
@@ -275,13 +283,15 @@ def _work_report_query(
 
 def _unwrap_api_envelope(
     payload: object, *, require_data: bool = True,
-    success_codes: tuple[int, ...] = (0,),
+    success_codes: tuple[int, ...] = _DOCUMENTED_READ_SUCCESS_CODES,
 ) -> object:
     if not isinstance(payload, Mapping):
         raise MammotionMalformedResponseError("Mammotion API response must be an object")
     code = payload.get("code")
     if isinstance(code, bool) or not isinstance(code, int):
         raise MammotionMalformedResponseError("Mammotion API response code must be an integer")
+    if code in (401, 403):
+        raise MammotionAuthenticationError("Mammotion rejected the access token")
     if code not in success_codes:
         message = payload.get("msg")
         raise MammotionApiError(code, message if isinstance(message, str) else None)

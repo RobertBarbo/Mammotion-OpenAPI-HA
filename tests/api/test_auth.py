@@ -58,6 +58,15 @@ class MammotionAuthTest(unittest.IsolatedAsyncioTestCase):
             "client_secret": "test-client-secret",
         })])
 
+    async def test_token_envelope_accepts_documented_success_code_200(self) -> None:
+        session = FakeSession([_Response(200, {
+            "code": 200,
+            "data": {"access_token": "test-token-one", "expires_in": 3600},
+        })])
+        auth = MammotionAuth(session, "test-client-id", "test-client-secret")  # type: ignore[arg-type]
+
+        self.assertEqual(await auth.async_get_access_token(), "test-token-one")
+
     async def test_reuses_unexpired_token(self) -> None:
         session = FakeSession([_Response(200, {
             "code": 0, "msg": "Request success",

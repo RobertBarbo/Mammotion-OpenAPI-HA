@@ -216,16 +216,6 @@ READ_ONLY_SENSORS: tuple[MammotionReadOnlySensorDescription, ...] = (
         value_fn=lambda data: data.report_summary.carbon_reduction if data.report_summary else None,
     ),
     MammotionReadOnlySensorDescription(
-        key="knife_height_code", translation_key="knife_height_code",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.work_parameters.knife_height if data.work_parameters else None,
-    ),
-    MammotionReadOnlySensorDescription(
-        key="work_speed_code", translation_key="work_speed_code",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.work_parameters.speed if data.work_parameters else None,
-    ),
-    MammotionReadOnlySensorDescription(
         key="recorded_error_count", translation_key="recorded_error_count",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.error_codes.total if data.error_codes else None,

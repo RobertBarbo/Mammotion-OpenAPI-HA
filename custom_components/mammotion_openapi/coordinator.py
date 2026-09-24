@@ -83,9 +83,10 @@ class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapsh
                     return detail, ()
                 try:
                     plans = await self.client.get_plans(mower_id)
-                except MammotionAuthenticationError:
-                    raise
-                except MammotionError:
+                except Exception as err:
+                    # Plans are optional. Even an authorization error here
+                    # cannot outweigh a successful core list/detail poll.
+                    _LOGGER.debug("Optional mower plan read failed (%s)", type(err).__name__)
                     plans = None
                 return detail, plans
 
@@ -102,20 +103,17 @@ class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapsh
                 raise ConfigEntryAuthFailed("Mammotion authentication failed") from None
             if isinstance(result, asyncio.CancelledError):
                 raise result
-            if isinstance(result, MammotionError):
-                cached = previous.get(mower_id)
-                current[mower_id] = MowerSnapshot(
-                    mower=_merge_list_fields(listed_mower, cached.mower) if cached else listed_mower,
-                    detail_available=False,
-                    plans=cached.plans if cached else (),
-                    last_detail_update=cached.last_detail_update if cached else None,
-                )
+            if isinstance(result, Exception):
+                _LOGGER.debug("Mower detail read failed (%s)", type(result).__name__)
+                current[mower_id] = _detail_unavailable(listed_mower, previous.get(mower_id))
                 continue
             if isinstance(result, BaseException):
-                raise UpdateFailed("Unexpected Mammotion detail error") from None
+                raise result
             detail, plans = result
             if detail.id != mower_id:
-                raise UpdateFailed("Mammotion detail returned a mismatched device ID")
+                _LOGGER.warning("Mammotion detail returned a mismatched device ID")
+                current[mower_id] = _detail_unavailable(listed_mower, previous.get(mower_id))
+                continue
             cached = previous.get(mower_id)
             current[mower_id] = MowerSnapshot(
                 mower=_merge_list_fields(listed_mower, detail),
@@ -125,6 +123,38 @@ class MammotionDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MowerSnapsh
             )
 
         return current
+
+    async def async_refresh_after_action(self) -> None:
+        """Poll the same core data without losing known state on a transient failure.
+
+        Scheduled/manual coordinator refreshes retain normal HA error handling.
+        The post-command fetch is best-effort because a command can briefly
+        disrupt API reads even though the action itself succeeded.
+        """
+        try:
+            updated = await self._async_update_data()
+        except ConfigEntryAuthFailed:
+            _LOGGER.warning("Mammotion authentication failed after a mower command")
+            start_reauth = getattr(self.config_entry, "async_start_reauth_if_available", None)
+            if start_reauth is not None:
+                start_reauth(self.hass)
+        except Exception as err:
+            _LOGGER.debug("Post-command Mammotion refresh failed (%s)", type(err).__name__)
+        else:
+            # A transiently incomplete post-command list must not drop every
+            # existing device. The next scheduled core poll may remove devices
+            # normally if the account really changed.
+            self.async_set_updated_data({**(self.data or {}), **updated})
+
+
+def _detail_unavailable(listed: Mower, cached: MowerSnapshot | None) -> MowerSnapshot:
+    """Keep one failed device without discarding other successful details."""
+    return MowerSnapshot(
+        mower=_merge_list_fields(listed, cached.mower) if cached else listed,
+        detail_available=False,
+        plans=cached.plans if cached else (),
+        last_detail_update=cached.last_detail_update if cached else None,
+    )
 
 
 def _merge_list_fields(listed: Mower, detail: Mower) -> Mower:

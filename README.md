@@ -9,7 +9,7 @@ The integration supports multiple devices on one Mammotion account. An observed 
 - Obtain a Mammotion Open API Client ID and Client Secret through Mammotion's developer program.
 - Link your devices to the account used for those credentials in the official Mammotion app.
 - Use a Home Assistant version with the `lawn_mower` platform. The integration has been tried on Home Assistant Core 2026.9.2; older releases have not yet been verified end-to-end. Native Stop support is feature-detected where available, and the custom Stop action remains available otherwise.
-- Treat this as an early-stage integration. Only `PAUSE` and `RESUME` have been confirmed against a real mower so far; the other exposed commands should be tested carefully at the device.
+- Treat this as an early-stage integration. `PAUSE`, `RESUME`, `STOP`, `RETURN`, and `START` have been reported to work on a real mower; test any other exposed command carefully at the device.
 
 ## Install
 
@@ -30,13 +30,13 @@ Add [RobertBarbo/Mammotion-OpenAPI-HA](https://github.com/RobertBarbo/Mammotion-
 - A **Saved task** dropdown when the official plan endpoint returns named tasks. Choosing one only updates a local selection; pressing **Start named task** sends `START` with that task name.
 - A local task-name text input remains as fallback for mowers with no returned plans. When both are present, a currently valid dropdown choice takes precedence. The selection and text are cleared when the integration reloads.
 - A **Refresh data** button on each device, including RTK. It only polls the API and never sends a mower command. A diagnostic **Last successful update** timestamp shows when device detail was last retrieved successfully.
-- Optional mower sensors for documented work totals (count, area, estimated time and carbon savings), raw blade-height/work-speed values, recorded error-entry count, and energy from the first returned work report. These are independent of the mower's basic state. "First returned" does not imply newest: the API specification does not promise a sort order.
+- Optional mower sensors for documented work totals (count, area, estimated time and carbon savings), recorded error-entry count, and energy from the first returned work report. These are independent of the mower's basic state. "First returned" does not imply newest: the API specification does not promise a sort order.
 
 The same seven actions are available as mower-targeted Home Assistant actions (`mammotion_openapi.cmd_start`, `start_task`, `pause`, `resume`, `stop`, `return_to_dock`, and `cancel_return`). `start_task` requires `task_name`. No action should be tested unless someone is physically near the mower and can stop it safely.
 
-The raw `status` and numeric `chargeStatus` values are kept visible rather than assigning undocumented meanings to them. `Mowing` maps to Mowing; `TaskPaused` maps to Paused. An observed docked mower reported `status: "Standby"` and `chargeStatus: 2`; only that combination is mapped to Docked. Other states stay unmapped where their meaning is unconfirmed. The active network sensor displays Wi-Fi for [documented code `"1"` and Cellular for `"2"`](https://developer.mammotion.com/docs/get-device-informations), and retains any unknown code as-is.
+The raw `status` and numeric `chargeStatus` values remain visible. `Mowing`/`Working` map to Mowing, `Returning` to Returning, and `Abnormal` to Error when those Home Assistant activities exist. `TaskPaused`/`Paused` map to Paused with `chargeStatus: 0`, but to Docked with confirmed charging/dock values `1` or `2`; `Standby` maps to Idle with `0` when that Home Assistant activity exists, or to Docked with `1` or `2`. Unknown charge codes remain unmapped. The active network sensor displays Wi-Fi for [documented code `"1"` and Cellular for `"2"`](https://developer.mammotion.com/docs/get-device-informations), and retains any unknown code as-is.
 
-In the integration's **Configure** menu, choose a basic-state polling interval of **5, 10, or 15 minutes** (default: 5). Work parameters, history and recorded errors are queried separately once per hour to avoid excessive API use. **Refresh data** also requests those read-only values for all account mowers; for RTK it refreshes basic data only. Changing the option reloads the integration, so the local task selection/text will be cleared. Mammotion's API rate limits have not been confirmed.
+In the integration's **Configure** menu, choose a basic-state polling interval of **5, 10, or 15 minutes** (default: 5). Work history and recorded errors are queried separately once per hour to avoid excessive API use. **Refresh data** also requests those optional values for all account mowers; for RTK it refreshes basic data only. Changing the option reloads the integration, so the local task selection/text will be cleared. Mammotion's API rate limits have not been confirmed. A successful command performs a best-effort core refresh; a transient post-command read failure keeps the last known availability until the next regular poll.
 
 ## Official API surface
 
@@ -49,15 +49,17 @@ The integration uses the following endpoints from Mammotion's [official OpenAPI 
 | Device detail | `GET https://api-open.mammotion.com/v1/mower/{deviceId}` |
 | Saved plans | `GET https://api-open.mammotion.com/v1/mower/{deviceId}/plan` |
 | Mower commands | `POST https://api-open.mammotion.com/v1/mower/action` |
-| Current work parameters | `GET https://api-open.mammotion.com/v1/mower/{deviceId}/work-params` |
+| Current work parameters (unsafe; never polled automatically) | `GET https://api-open.mammotion.com/v1/mower/{deviceId}/work-params` |
 | Search work reports | `POST https://api-open.mammotion.com/v1/mower/work-reports/search` |
 | Summarize work reports | `POST https://api-open.mammotion.com/v1/mower/work-reports/summary` |
 | Work report detail | `GET https://api-open.mammotion.com/v1/mower/{deviceId}/work-reports/{workId}` |
 | Search recorded error codes | `POST https://api-open.mammotion.com/v1/mower/error-codes/search` |
 
-The `POST` report and error-code search endpoints are queries, not mower commands. `POST /v1/mower/material/fetch` and `POST /v1/devices/subscriptions` are intentionally **not** implemented: the former triggers device upload, and the latter creates a short-lived SSE subscription. The optional history calls do not target RTK and fail independently; they cannot block basic mower status or controls. The new specification examples show API envelope code `200`, while earlier live responses used `0`, so the new read-only methods accept both. Real sanitized responses are still needed to confirm model-specific shapes.
+The `POST` report and error-code search endpoints are queries, not mower commands. `POST /v1/mower/material/fetch` and `POST /v1/devices/subscriptions` are intentionally **not** implemented: the former triggers device upload, and the latter creates a short-lived SSE subscription. The optional history calls do not target RTK and fail independently; they cannot block basic mower status or controls. Mammotion's specification examples show API envelope code `200`, while live responses have used `0`, so all REST methods accept both. Real sanitized responses are still needed to confirm the newer model-specific shapes.
 
-The plan endpoint supplies optional task names for the local dropdown. Empty plan lists leave the manual text input usable. A failed plan request retains the last successful list without hiding mower detail; authentication failures still trigger reauthentication. Basic state is polled at the configured interval and refreshed after a command. The API client uses Home Assistant's shared `aiohttp` session and renews expiring tokens automatically.
+**Safety warning:** A real LUBA 2 unexpectedly started mowing after `GET /v1/mower/{deviceId}/work-params`, which returned `commandResult: true` and `"Command has been sent"`. Home Assistant therefore never calls this path automatically, including on **Refresh data**. Blade-height and work-speed entities based on it are no longer created. Existing registry entries from an older installation may remain unavailable until removed manually. Do not manually call this endpoint unless you are at the mower and prepared for it to start.
+
+The plan endpoint supplies optional task names for the local dropdown. Empty plan lists leave the manual text input usable. A failed plan request retains the last successful list without hiding mower detail; core list or detail authentication failures still trigger reauthentication. Basic state is polled at the configured interval and refreshed after a command. The API client uses Home Assistant's shared `aiohttp` session and renews expiring tokens automatically.
 
 ## Diagnostics and privacy
 

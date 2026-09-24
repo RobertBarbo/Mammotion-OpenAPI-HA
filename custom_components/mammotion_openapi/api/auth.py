@@ -11,7 +11,6 @@ from typing import Any
 import aiohttp
 
 from .exceptions import (
-    MammotionApiError,
     MammotionAuthenticationError,
     MammotionMalformedResponseError,
     MammotionTransportError,
@@ -19,6 +18,7 @@ from .exceptions import (
 
 TOKEN_URL = "https://id.mammotion.com/oauth2/token"
 _EXPIRY_SKEW_SECONDS = 30
+_TOKEN_SUCCESS_CODES = (0, 200)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,11 +118,9 @@ def _unwrap_token_response(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     code = payload.get("code")
     if isinstance(code, bool) or not isinstance(code, int):
         raise MammotionMalformedResponseError("Token response code must be an integer")
-    if code != 0:
-        message = payload.get("msg")
-        raise MammotionAuthenticationError(
-            str(MammotionApiError(code, message if isinstance(message, str) else None))
-        )
+    if code not in _TOKEN_SUCCESS_CODES:
+        # An upstream message may contain account-specific information.
+        raise MammotionAuthenticationError("Mammotion rejected the token request")
     data = payload.get("data")
     if not isinstance(data, Mapping):
         raise MammotionMalformedResponseError("Successful token response data must be an object")

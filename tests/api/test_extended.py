@@ -134,7 +134,7 @@ class ExtendedApiTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_rejects_non_success_code_and_malformed_data(self) -> None:
-        client, _ = self._client(_Response(200, {"code": 401, "data": {}}))
+        client, _ = self._client(_Response(200, {"code": 402, "data": {}}))
         with self.assertRaises(MammotionApiError):
             await client.get_work_parameters("mower-a")
 
@@ -148,10 +148,11 @@ class ExtendedApiTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MammotionMalformedResponseError):
             await client.search_error_codes("mower-a")
 
-    async def test_old_endpoints_still_require_observed_zero_code(self) -> None:
-        client, _ = self._client(_Response(200, {"code": 200, "data": []}))
-        with self.assertRaises(MammotionApiError):
-            await client.get_mowers()
+    async def test_existing_endpoint_accepts_both_success_codes(self) -> None:
+        for code in (0, 200):
+            with self.subTest(code=code):
+                client, _ = self._client(_Response(200, {"code": code, "data": []}))
+                self.assertEqual(await client.get_mowers(), ())
 
     async def test_invalid_pagination_is_rejected_before_network(self) -> None:
         client, session = self._client()

@@ -350,7 +350,55 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mower.activity, LawnMowerActivity.DOCKED)
         self.assertTrue(mower.available)
 
-    async def test_standby_without_dock_evidence_remains_unmapped(self) -> None:
+    async def test_confirmed_charging_and_raw_status_activity_mapping(self) -> None:
+        mower = next(entity for entity in self.mowers if entity.device_id == "mower-a")
+        cases = (
+            ("TaskPaused", 0, LawnMowerActivity.PAUSED),
+            ("TaskPaused", 1, LawnMowerActivity.DOCKED),
+            ("TaskPaused", 2, LawnMowerActivity.DOCKED),
+            ("TaskPaused", None, LawnMowerActivity.PAUSED),
+            ("Paused", 0, LawnMowerActivity.PAUSED),
+            ("Paused", 1, LawnMowerActivity.DOCKED),
+            ("Paused", 2, LawnMowerActivity.DOCKED),
+            ("Standby", 1, LawnMowerActivity.DOCKED),
+            ("Standby", 2, LawnMowerActivity.DOCKED),
+            ("Mowing", 0, LawnMowerActivity.MOWING),
+            ("Working", 0, LawnMowerActivity.MOWING),
+            ("Returning", 0, LawnMowerActivity.RETURNING),
+            ("Abnormal", 0, LawnMowerActivity.ERROR),
+            ("TaskPaused", 3, None),
+            ("Paused", 3, None),
+            ("Standby", 3, None),
+        )
+        for status, charge_status, expected in cases:
+            with self.subTest(status=status, charge_status=charge_status):
+                self.client.details["mower-a"] = Mower(
+                    id="mower-a", online=True, status=status,
+                    charge_status=charge_status,
+                )
+                await self.coordinator.async_request_refresh()
+                self.assertEqual(mower.activity, expected)
+
+    async def test_missing_ha_activity_members_are_not_used(self) -> None:
+        mower = next(entity for entity in self.mowers if entity.device_id == "mower-a")
+
+        class OlderActivities(Enum):
+            MOWING = "mowing"
+            PAUSED = "paused"
+
+        with patch.object(lawn_mower, "LawnMowerActivity", OlderActivities):
+            for status, charge_status in (
+                ("TaskPaused", 2), ("Returning", 0), ("Abnormal", 0),
+            ):
+                with self.subTest(status=status):
+                    self.client.details["mower-a"] = Mower(
+                        id="mower-a", online=True, status=status,
+                        charge_status=charge_status,
+                    )
+                    await self.coordinator.async_request_refresh()
+                    self.assertIsNone(mower.activity)
+
+    async def test_standby_off_dock_is_idle_when_ha_supports_it(self) -> None:
         mower = next(entity for entity in self.mowers if entity.device_id == "mower-a")
         self.client.details["mower-a"] = Mower(
             id="mower-a", online=True, status="Standby", charge_status=0,
@@ -368,7 +416,7 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
             IDLE = "idle"
 
         with patch.object(lawn_mower, "LawnMowerActivity", NewerLawnMowerActivity):
-            self.assertIsNone(mower.activity)
+            self.assertEqual(mower.activity, NewerLawnMowerActivity.IDLE)
 
     async def test_offline_mower_is_unavailable(self) -> None:
         mower = next(entity for entity in self.mowers if entity.device_id == "mower-b")
@@ -488,12 +536,13 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(values["work_count"], 3)
         self.assertEqual(values["total_work_area"], 450.25)
-        self.assertEqual(values["knife_height_code"], 35)
-        self.assertEqual(values["work_speed_code"], 60)
+        self.assertNotIn("knife_height_code", values)
+        self.assertNotIn("work_speed_code", values)
         self.assertEqual(values["recorded_error_count"], 0)
         self.assertEqual(values["first_returned_report_energy"], 120.5)
         self.assertIsNotNone(values["last_read_only_update"])
         self.assertEqual(self.client.actions, [])
+        self.assertFalse(any(name == "work_parameters" for name, _ in self.client.read_calls))
 
     async def test_optional_endpoint_failure_does_not_disable_mower(self) -> None:
         async def failing_summary(_mower_id: str) -> WorkReportSummary:
@@ -510,18 +559,101 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(mower.available)
 
     async def test_unexpected_optional_failure_is_isolated(self) -> None:
-        async def failing_params(_mower_id: str) -> WorkParameters:
+        async def failing_summary(_mower_id: str) -> WorkReportSummary:
             raise RuntimeError("fake-sensitive-response")
 
-        self.client.get_work_parameters = failing_params  # type: ignore[method-assign]
+        self.client.get_work_report_summary = failing_summary  # type: ignore[method-assign]
         await self.read_only_coordinator.async_request_refresh()
-        param_sensor = next(
+        summary_sensor = next(
             item for item in self.read_only_sensors
-            if item.device_id == "mower-a" and item.entity_description.key == "knife_height_code"
+            if item.device_id == "mower-a" and item.entity_description.key == "work_count"
         )
         mower = next(item for item in self.mowers if item.device_id == "mower-a")
-        self.assertFalse(param_sensor.available)
+        self.assertFalse(summary_sensor.available)
         self.assertTrue(mower.available)
+
+    async def test_action_then_optional_failure_keeps_all_core_devices_available(self) -> None:
+        async def failing_summary(_mower_id: str) -> WorkReportSummary:
+            raise MammotionTransportError("temporary optional outage")
+
+        self.client.get_work_report_summary = failing_summary  # type: ignore[method-assign]
+        self.client.plans["mower-a"] = MammotionTransportError("temporary plan outage")
+        mower = next(item for item in self.mowers if item.device_id == "mower-a")
+        other_mower = next(item for item in self.mowers if item.device_id == "mower-b")
+        rtk_online = next(
+            item for item in self.binary_sensors
+            if item.device_id == "rtk-a" and item.entity_description.key == "online"
+        )
+
+        await mower.async_pause()
+        await self.read_only_coordinator.async_request_refresh()
+
+        self.assertEqual(self.client.actions, [("mower-a", MowerAction.PAUSE)])
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertTrue(mower.available)
+        self.assertTrue(other_mower.available)
+        self.assertTrue(rtk_online.available)
+
+    async def test_failed_post_action_core_refresh_preserves_known_availability(self) -> None:
+        async def failing_list() -> tuple[Mower, ...]:
+            raise MammotionTransportError("brief outage after command")
+
+        self.client.get_mowers = failing_list  # type: ignore[method-assign]
+        mower = next(item for item in self.mowers if item.device_id == "mower-a")
+        other_mower = next(item for item in self.mowers if item.device_id == "mower-b")
+
+        await mower.async_pause()
+
+        self.assertEqual(self.client.actions, [("mower-a", MowerAction.PAUSE)])
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertTrue(mower.available)
+        self.assertTrue(other_mower.available)
+
+    async def test_empty_post_action_list_does_not_drop_known_devices(self) -> None:
+        async def empty_list() -> tuple[Mower, ...]:
+            return ()
+
+        self.client.get_mowers = empty_list  # type: ignore[method-assign]
+        mower = next(item for item in self.mowers if item.device_id == "mower-a")
+        other_mower = next(item for item in self.mowers if item.device_id == "mower-b")
+
+        await mower.async_pause()
+
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertTrue(mower.available)
+        self.assertTrue(other_mower.available)
+        self.assertIn("rtk-a", self.coordinator.data)
+
+    async def test_action_button_uses_safe_post_command_refresh(self) -> None:
+        async def failing_list() -> tuple[Mower, ...]:
+            raise MammotionTransportError("brief outage after button command")
+
+        self.client.get_mowers = failing_list  # type: ignore[method-assign]
+        pause_button = next(
+            item for item in self.buttons
+            if isinstance(item, button.MammotionActionButton)
+            and item.device_id == "mower-a"
+            and item.entity_description.action is MowerAction.PAUSE
+        )
+        other_mower = next(item for item in self.mowers if item.device_id == "mower-b")
+
+        await pause_button.async_press()
+
+        self.assertEqual(self.client.actions, [("mower-a", MowerAction.PAUSE)])
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertTrue(other_mower.available)
+
+    async def test_manual_refresh_never_calls_unsafe_work_params(self) -> None:
+        refresh = next(
+            item for item in self.buttons
+            if isinstance(item, button.MammotionRefreshButton)
+            and item.device_id == "mower-a"
+        )
+        self.client.read_calls.clear()
+
+        await refresh.async_press()
+
+        self.assertFalse(any(name == "work_parameters" for name, _ in self.client.read_calls))
 
     async def test_empty_reports_do_not_request_report_detail(self) -> None:
         async def empty_reports(_mower_id: str) -> WorkReportPage:
@@ -531,6 +663,19 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
         self.client.read_calls.clear()
         await self.read_only_coordinator.async_request_refresh()
         self.assertFalse(any(name == "get_work_report" for name, _ in self.client.read_calls))
+
+    async def test_unexpected_history_shape_preserves_previous_optional_snapshot(self) -> None:
+        async def broken_reports(_mower_id: str) -> WorkReportPage:
+            return SimpleNamespace(records=None)  # type: ignore[return-value]
+
+        previous = self.read_only_coordinator.data["mower-a"]
+        self.client.search_work_reports = broken_reports  # type: ignore[method-assign]
+
+        await self.read_only_coordinator.async_request_refresh()
+
+        self.assertTrue(self.read_only_coordinator.last_update_success)
+        self.assertEqual(self.read_only_coordinator.data["mower-a"], previous)
+        self.assertTrue(next(item for item in self.mowers if item.device_id == "mower-a").available)
 
     async def test_rtk_manual_refresh_does_not_request_read_only_paths(self) -> None:
         refresh = next(

@@ -15,7 +15,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api.client import MammotionApiClient
 from .api.extended_models import (
     DeviceErrorCodePage,
-    WorkParameters,
     WorkReportDetail,
     WorkReportPage,
     WorkReportSummary,
@@ -33,7 +32,6 @@ _T = TypeVar("_T")
 class ReadOnlySnapshot:
     """Optional data; missing values never block basic mower integration."""
 
-    work_parameters: WorkParameters | None = None
     report_summary: WorkReportSummary | None = None
     report_page: WorkReportPage | None = None
     report_detail: WorkReportDetail | None = None
@@ -42,7 +40,7 @@ class ReadOnlySnapshot:
 
 
 class MammotionReadOnlyCoordinator(DataUpdateCoordinator[dict[str, ReadOnlySnapshot]]):
-    """Fetch history/parameters hourly, separate from five-minute state polls."""
+    """Fetch optional history hourly, separate from basic state polls."""
 
     def __init__(
         self,
@@ -64,7 +62,6 @@ class MammotionReadOnlyCoordinator(DataUpdateCoordinator[dict[str, ReadOnlySnaps
 
         async def fetch_mower(device_id: str) -> tuple[str, ReadOnlySnapshot]:
             async with limit:
-                params = await _optional(self.client.get_work_parameters(device_id))
                 summary = await _optional(self.client.get_work_report_summary(device_id))
                 reports = await _optional(self.client.search_work_reports(device_id))
                 errors = await _optional(self.client.search_error_codes(device_id))
@@ -79,10 +76,9 @@ class MammotionReadOnlyCoordinator(DataUpdateCoordinator[dict[str, ReadOnlySnaps
                             self.client.get_work_report(device_id, first_with_id.work_id)
                         )
                 successful = any(
-                    value is not None for value in (params, summary, reports, errors, detail)
+                    value is not None for value in (summary, reports, errors, detail)
                 )
                 return device_id, ReadOnlySnapshot(
-                    work_parameters=params,
                     report_summary=summary,
                     report_page=reports,
                     report_detail=detail,
@@ -92,14 +88,29 @@ class MammotionReadOnlyCoordinator(DataUpdateCoordinator[dict[str, ReadOnlySnaps
                     ),
                 )
 
+        device_ids = [
+            device_id for device_id, snapshot in current_mowers.items()
+            if snapshot.mower.model != RTK_STATION_MODEL
+        ]
         results = await asyncio.gather(
-            *(
-                fetch_mower(device_id)
-                for device_id, snapshot in current_mowers.items()
-                if snapshot.mower.model != RTK_STATION_MODEL
-            )
+            *(fetch_mower(device_id) for device_id in device_ids),
+            return_exceptions=True,
         )
-        return dict(results)
+        previous = self.data or {}
+        current: dict[str, ReadOnlySnapshot] = {}
+        for device_id, result in zip(device_ids, results):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                # A malformed optional record must not fail this coordinator,
+                # let alone the independent core mower coordinator.
+                _LOGGER.warning("Optional mower history read failed (%s)", type(result).__name__)
+                current[device_id] = previous.get(device_id, ReadOnlySnapshot())
+            elif isinstance(result, BaseException):
+                raise result
+            else:
+                _, current[device_id] = result
+        return current
 
 
 async def _optional(awaitable: Awaitable[_T]) -> _T | None:

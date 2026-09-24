@@ -24,10 +24,17 @@ from .entity import (
 
 PARALLEL_UPDATES = 0
 
-_STATUS_TO_ACTIVITY = {
-    "Mowing": LawnMowerActivity.MOWING,
-    "TaskPaused": LawnMowerActivity.PAUSED,
+_STATUS_TO_ACTIVITY_MEMBER = {
+    "Mowing": "MOWING",
+    "Working": "MOWING",
+    "Returning": "RETURNING",
+    "Abnormal": "ERROR",
 }
+
+
+def _available_activity(member: str) -> LawnMowerActivity | None:
+    """Avoid using an activity absent from an older Home Assistant version."""
+    return getattr(LawnMowerActivity, member, None)
 
 # Extra entity actions expose every confirmed Open API command, including
 # commands not represented by HA's lawn_mower controls on older releases.
@@ -135,16 +142,24 @@ class MammotionLawnMower(MammotionCoordinatorEntity, LawnMowerEntity):
         snapshot = self.snapshot
         if snapshot is None:
             return None
-        if snapshot.mower.status == "Standby":
-            # A mower observed on its dock reported chargeStatus 2. Keep this
-            # inference narrow: neither Standby nor other charge codes alone
-            # establish that a mower is docked.
-            if snapshot.mower.charge_status == 2:
-                return LawnMowerActivity.DOCKED
-            # Standby without observed dock evidence is not necessarily idle.
-            # The raw status sensor remains available without guessing.
+        status = snapshot.mower.status
+        charge_status = snapshot.mower.charge_status
+        if status in ("TaskPaused", "Paused"):
+            if charge_status in (1, 2):
+                return _available_activity("DOCKED")
+            if charge_status in (0, None):
+                return _available_activity("PAUSED")
+            # Unknown charge codes do not establish whether it is docked.
             return None
-        return _STATUS_TO_ACTIVITY.get(snapshot.mower.status)
+        if status == "Standby":
+            if charge_status in (1, 2):
+                return _available_activity("DOCKED")
+            if charge_status == 0:
+                return _available_activity("IDLE")
+            # Unknown or missing charge status does not establish activity.
+            return None
+        member = _STATUS_TO_ACTIVITY_MEMBER.get(status)
+        return _available_activity(member) if member is not None else None
 
     async def async_start_mowing(self) -> None:
         """Resume a paused task; otherwise request the mower's default start."""

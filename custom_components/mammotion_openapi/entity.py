@@ -60,4 +60,4 @@ async def async_send_mower_action(
     except MammotionError:
         # Server error text is untrusted and could contain sensitive data.
         raise HomeAssistantError("Mammotion rejected the mower command") from None
-    await coordinator.async_request_refresh()
+    await coordinator.async_refresh_after_action()

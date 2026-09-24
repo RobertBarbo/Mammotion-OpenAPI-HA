@@ -53,10 +53,10 @@ class FakeSession:
         return _RequestContext(self.api_responses.pop(0))
 
 
-def _token() -> _Response:
+def _token(value: str = "test-access-token") -> _Response:
     return _Response(200, {
         "code": 0, "msg": "Request success",
-        "data": {"access_token": "test-access-token", "expires_in": 3600},
+        "data": {"access_token": value, "expires_in": 3600},
     })
 
 
@@ -205,6 +205,19 @@ class MammotionApiClientTest(unittest.IsolatedAsyncioTestCase):
             "params": {"taskName": "Front lawn"},
         })
 
+    async def test_existing_endpoints_accept_envelope_code_200(self) -> None:
+        client, _ = self._client(
+            _Response(200, {"code": 200, "data": [{"id": "mower-a"}]}),
+            _Response(200, {"code": 200, "data": {"id": "mower-a"}}),
+            _Response(200, {"code": 200, "data": []}),
+            _Response(200, {"code": 200, "msg": "Request success"}),
+        )
+
+        self.assertEqual(len(await client.get_mowers()), 1)
+        self.assertEqual((await client.get_mower("mower-a")).id, "mower-a")
+        self.assertEqual(await client.get_plans("mower-a"), ())
+        await client.send_action("mower-a", MowerAction.PAUSE)
+
     async def test_nonzero_api_code_raises_typed_error(self) -> None:
         client, _session = self._client(_Response(200, {"code": 1001, "msg": "Action rejected", "data": None}))
 
@@ -231,3 +244,53 @@ class MammotionApiClientTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MammotionAuthenticationError):
             await client.get_mowers()
         self.assertEqual(len(session.posts), 2)
+
+    async def test_http_200_envelope_code_401_retries_then_raises_auth(self) -> None:
+        client, session = self._client(
+            _Response(200, {"code": 401, "msg": "Access requires authentication"}),
+            _Response(200, {"code": 401, "msg": "Access requires authentication"}),
+        )
+        session.token_responses.append(_token("test-new-token"))
+
+        with self.assertRaises(MammotionAuthenticationError):
+            await client.get_mowers()
+        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(len(session.requests), 2)
+
+    async def test_http_200_envelope_code_403_retries_then_raises_auth(self) -> None:
+        client, session = self._client(
+            _Response(200, {"code": 403, "msg": "Access denied"}),
+            _Response(200, {"code": 403, "msg": "Access denied"}),
+        )
+        session.token_responses.append(_token("test-new-token"))
+
+        with self.assertRaises(MammotionAuthenticationError):
+            await client.get_mowers()
+        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(len(session.requests), 2)
+
+    async def test_envelope_auth_failure_succeeds_with_new_token(self) -> None:
+        client, session = self._client(
+            _Response(200, {"code": 401, "msg": "Access requires authentication"}),
+            _Response(200, {"code": 200, "data": [{"id": "mower-a"}]}),
+        )
+        session.token_responses.append(_token("test-new-token"))
+
+        self.assertEqual((await client.get_mowers())[0].id, "mower-a")
+        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(
+            [request["headers"]["Authorization"] for request in session.requests],
+            ["Bearer test-access-token", "Bearer test-new-token"],
+        )
+
+    async def test_envelope_auth_failure_stops_after_single_retry(self) -> None:
+        client, session = self._client(
+            _Response(200, {"code": 401, "msg": "Access requires authentication"}),
+            _Response(200, {"code": 403, "msg": "Access denied"}),
+        )
+        session.token_responses.append(_token("test-new-token"))
+
+        with self.assertRaises(MammotionAuthenticationError):
+            await client.get_mowers()
+        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(len(session.requests), 2)

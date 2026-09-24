@@ -86,12 +86,14 @@ list so a local saved-task selector can show returned task names. Empty lists
 are valid; RTK stations are not queried for plans. Coordinator data is keyed
 by the official device `id`, so one account supports multiple devices.
 
-A second coordinator polls optional work parameters, historical reports and
-recorded error codes at most hourly; the manual Refresh data button can
-request an earlier update. Each optional endpoint fails independently so an
-unsupported model or transient failure cannot disable basic mower controls.
-The RTK station is never queried for mower work history. Report map URLs and
-other media resources are not exposed as HA entity attributes or diagnostics.
+A second coordinator polls optional historical reports and recorded error codes
+at most hourly; the manual Refresh data button can request an earlier update.
+The documented `/work-params` GET unexpectedly triggered mowing on a real
+device and is never called automatically. Each optional endpoint fails
+independently so an unsupported model or transient failure cannot disable
+basic mower controls. The RTK station is never queried for mower work history.
+Report map URLs and other media resources are not exposed as HA entity
+attributes or diagnostics.
 
 The `/v1/mowers` response can also contain an RTK reference station. Keep it
 registered as a Home Assistant device; future mower platforms must not attach

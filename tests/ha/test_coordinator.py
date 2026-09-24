@@ -56,8 +56,9 @@ class _Client:
 class CoordinatorTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.client = _Client()
+        self.entry = FakeEntry()
         self.coordinator = MammotionDataUpdateCoordinator(
-            FakeHass(), FakeEntry(), self.client  # type: ignore[arg-type]
+            FakeHass(), self.entry, self.client  # type: ignore[arg-type]
         )
 
     async def test_multiple_mower_discovery(self) -> None:
@@ -104,12 +105,14 @@ class CoordinatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("rtk-a", self.client.plan_calls)
         self.assertEqual(self.coordinator.data["rtk-a"].plans, ())
 
-    async def test_plan_auth_failure_triggers_reauth(self) -> None:
+    async def test_optional_plan_auth_failure_does_not_fail_core(self) -> None:
         self.client.plans["mower-a"] = MammotionAuthenticationError("test-client-secret")
 
-        with self.assertRaises(ConfigEntryAuthFailed) as context:
-            await self.coordinator.async_config_entry_first_refresh()
-        self.assertNotIn("test-client-secret", str(context.exception))
+        await self.coordinator.async_config_entry_first_refresh()
+
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertEqual(self.coordinator.data["mower-a"].plans, ())
+        self.assertTrue(self.coordinator.data["mower-b"].detail_available)
 
     async def test_configured_interval(self) -> None:
         from datetime import timedelta
@@ -148,8 +151,51 @@ class CoordinatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("test-client-secret", str(context.exception))
 
     async def test_list_failure_is_update_failure(self) -> None:
+        await self.coordinator.async_config_entry_first_refresh()
         self.client.listed = MammotionTransportError("test-client-secret")
 
         with self.assertRaises(UpdateFailed) as context:
+            await self.coordinator.async_request_refresh()
+        self.assertNotIn("test-client-secret", str(context.exception))
+        self.assertFalse(self.coordinator.last_update_success)
+
+    async def test_list_auth_failure_still_requires_reauth(self) -> None:
+        self.client.listed = MammotionAuthenticationError("test-client-secret")
+
+        with self.assertRaises(ConfigEntryAuthFailed) as context:
             await self.coordinator.async_config_entry_first_refresh()
         self.assertNotIn("test-client-secret", str(context.exception))
+
+    async def test_post_action_auth_failure_starts_reauth_without_dropping_data(self) -> None:
+        await self.coordinator.async_config_entry_first_refresh()
+        self.client.listed = MammotionAuthenticationError("test-client-secret")
+
+        await self.coordinator.async_refresh_after_action()
+
+        self.assertTrue(self.entry.reauth_started)
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertEqual(set(self.coordinator.data), {"mower-a", "mower-b"})
+
+    async def test_unexpected_detail_failure_is_isolated(self) -> None:
+        await self.coordinator.async_config_entry_first_refresh()
+        self.client.details["mower-a"] = RuntimeError("temporary detail parsing failure")
+        self.client.details["mower-b"] = Mower(
+            id="mower-b", status="Mowing", online=True
+        )
+
+        await self.coordinator.async_request_refresh()
+
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertFalse(self.coordinator.data["mower-a"].detail_available)
+        self.assertTrue(self.coordinator.data["mower-b"].detail_available)
+        self.assertEqual(self.coordinator.data["mower-b"].mower.status, "Mowing")
+
+    async def test_mismatched_detail_id_is_isolated(self) -> None:
+        await self.coordinator.async_config_entry_first_refresh()
+        self.client.details["mower-a"] = Mower(id="wrong-fake-id")
+
+        await self.coordinator.async_request_refresh()
+
+        self.assertTrue(self.coordinator.last_update_success)
+        self.assertFalse(self.coordinator.data["mower-a"].detail_available)
+        self.assertTrue(self.coordinator.data["mower-b"].detail_available)

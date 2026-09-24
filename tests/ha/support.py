@@ -71,16 +71,27 @@ def install_home_assistant_stubs() -> None:
             return cls
 
         def __init__(self, _hass: Any, _logger: Any, **kwargs: Any) -> None:
+            self.hass = _hass
             self.data: Any = None
+            self.last_update_success = False
             self.config_entry = kwargs["config_entry"]
             self.update_interval = kwargs["update_interval"]
             self._listeners: list[Any] = []
 
         async def async_config_entry_first_refresh(self) -> None:
-            self.data = await self._async_update_data()
+            await self.async_request_refresh()
 
         async def async_request_refresh(self) -> None:
-            self.data = await self._async_update_data()
+            try:
+                updated = await self._async_update_data()
+            except Exception:
+                self.last_update_success = False
+                raise
+            self.async_set_updated_data(updated)
+
+        def async_set_updated_data(self, data: Any) -> None:
+            self.data = data
+            self.last_update_success = True
             for listener in tuple(self._listeners):
                 listener()
 
@@ -114,7 +125,7 @@ def install_home_assistant_stubs() -> None:
 
         @property
         def available(self) -> bool:
-            return True
+            return self.coordinator.last_update_success
 
     class LawnMowerActivity(Enum):
         MOWING = "mowing"
@@ -288,7 +299,11 @@ class FakeEntry:
         self.data = {"client_id": client_id, "client_secret": "test-client-secret"}
         self.options: dict[str, Any] = {}
         self.runtime_data: Any = None
+        self.reauth_started = False
         self._unload_callbacks: list[Any] = []
+
+    def async_start_reauth_if_available(self, _hass: Any) -> None:
+        self.reauth_started = True
 
     def async_on_unload(self, callback: Any) -> None:
         self._unload_callbacks.append(callback)
