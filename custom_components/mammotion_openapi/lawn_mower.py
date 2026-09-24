@@ -163,7 +163,7 @@ class MammotionLawnMower(MammotionCoordinatorEntity, LawnMowerEntity):
 
     async def async_start_mowing(self) -> None:
         """Resume a paused task; otherwise request the mower's default start."""
-        if self.snapshot and self.snapshot.mower.status == "TaskPaused":
+        if self.snapshot and self.snapshot.mower.status in ("TaskPaused", "Paused"):
             await self.async_resume()
         else:
             await self.async_cmd_start()

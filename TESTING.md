@@ -6,12 +6,14 @@ For each command, record the mower's raw `status`, `chargeStatus`, `online`, and
 
 | Command | Current evidence | What to verify locally |
 | --- | --- | --- |
-| `PAUSE` | Confirmed via shell | HA button pauses an active task; note returned status. |
-| `RESUME` | Confirmed via shell | HA button resumes a paused task; note returned status. |
+| `PAUSE` | Confirmed on a real LUBA 2 via the official Open API | HA button pauses an active task; note returned status. |
+| `RESUME` | Confirmed on a real LUBA 2 via the official Open API | HA button resumes a paused task; note returned status. |
 | `CMD_START` | Not live-confirmed here | Default start behavior and resulting status. |
-| `START` | Payload documented with `taskName`; not live-confirmed here | Returned plan name or manual fallback starts the intended saved task. |
-| `STOP` | Not live-confirmed here | Stops task without an unintended return. |
-| `RETURN` | Not live-confirmed here | Returns to dock; note statuses during return and on dock. |
+| `START` | Confirmed on a real LUBA 2 with a saved task name (`taskName`); no confirmation without one | Returned plan name starts the intended saved task. |
+| `STOP` | Confirmed on a real LUBA 2 via the official Open API | Stops task without an unintended return. |
+| `RETURN` | Confirmed on a real LUBA 2 via the official Open API | Returns to dock; note statuses during return and on dock. |
 | `CANCEL_RETURN` | Not live-confirmed here | Cancels return without unintended movement. |
 
-Also verify that an empty plan list keeps the manual task-name field usable, changing the polling interval reloads the integration, Refresh data does not activate a mower, and RTK has diagnostics/refresh but no mower controls. Please report only sanitized observations; we will add status mappings after real evidence.
+Observed on the real LUBA 2: `Mowing` while mowing, `TaskPaused` while paused or charging, `Returning` while heading to the dock, and `Standby` after `STOP`. `chargeStatus: 0` was observed off dock; `chargeStatus: 2` while docked/charging.
+
+**Safety:** `GET /v1/mower/{deviceId}/work-params` unexpectedly started mowing on the real LUBA 2. Do not treat it as a safe read-only call; automatic polling and Refresh data must not call it. Verify commands cautiously at the mower and share only sanitized observations.

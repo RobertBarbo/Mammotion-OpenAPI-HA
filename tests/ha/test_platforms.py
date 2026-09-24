@@ -217,6 +217,26 @@ class PlatformTest(unittest.IsolatedAsyncioTestCase):
             ("mower-a", MowerAction.CMD_START),
         ])
 
+    async def test_start_mowing_resumes_both_paused_statuses_only(self) -> None:
+        mower = next(entity for entity in self.mowers if entity.device_id == "mower-a")
+        cases = (
+            ("TaskPaused", MowerAction.RESUME),
+            ("Paused", MowerAction.RESUME),
+            ("Standby", MowerAction.CMD_START),
+            ("Mowing", MowerAction.CMD_START),
+        )
+        for status, expected_action in cases:
+            with self.subTest(status=status):
+                self.client.details["mower-a"] = Mower(
+                    id="mower-a", online=True, status=status, charge_status=0,
+                )
+                await self.coordinator.async_request_refresh()
+                self.client.actions.clear()
+
+                await mower.async_start_mowing()
+
+                self.assertEqual(self.client.actions, [("mower-a", expected_action)])
+
     async def test_all_explicit_commands_use_only_confirmed_payloads(self) -> None:
         mower = next(entity for entity in self.mowers if entity.device_id == "mower-a")
 
